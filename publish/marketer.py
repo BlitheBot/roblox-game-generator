@@ -114,6 +114,28 @@ class InRobloxMarketer:
                 WHERE pg.status IN ('live', 'breakout')
                 """
             )
+        await self._refresh_rows(games, meta_keywords)
+
+    async def refresh_for_games(
+        self, game_ids: list[str], meta_keywords: list[str]
+    ) -> None:
+        """Cadence-driven refresh (spec 14) for specific due games."""
+        if not game_ids:
+            return
+        async with self._pool.acquire() as conn:
+            games = await conn.fetch(
+                """
+                SELECT pg.id, pg.game_title, pg.genre_account, pg.universe_id,
+                       cq.concept_json
+                FROM published_games pg
+                JOIN concept_queue cq ON cq.id = pg.concept_id
+                WHERE pg.id = ANY($1::uuid[])
+                """,
+                [uuid.UUID(g) for g in game_ids],
+            )
+        await self._refresh_rows(games, meta_keywords)
+
+    async def _refresh_rows(self, games, meta_keywords: list[str]) -> None:
         for game in games:
             try:
                 concept = (

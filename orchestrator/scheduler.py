@@ -24,7 +24,7 @@ from intelligence.trend_predictor import TrendPredictor
 from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
-from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor
+from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor, UpdateCadence
 from publish.approval_gate import ApprovalGate
 from publish.discord_bot import ApprovalBot, create_bot
 from publish.marketer import InRobloxMarketer
@@ -132,6 +132,27 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Live-game update cadence — daily at 03:00 (spec 14: breakout
+        # daily, normal weekly, underperforming monthly)
+        self._scheduler.add_job(
+            self._run_update_cycle,
+            trigger=CronTrigger(hour=3, minute=0),
+            id="update_cycle",
+            name="Live Game Update Cycle",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
+        # Low-CTR thumbnail refresh — monthly on the 1st (spec 5.2 phase 2)
+        self._scheduler.add_job(
+            self._run_thumbnail_refresh,
+            trigger=CronTrigger(day=1, hour=4, minute=0),
+            id="thumbnail_refresh",
+            name="Monthly Thumbnail CTR Refresh",
+            replace_existing=True,
+        )
+
         self._scheduler.start()
         log.info("orchestrator.started", cycle_hours=CYCLE_INTERVAL_HOURS)
 
@@ -176,6 +197,12 @@ class Orchestrator:
             meta=len(meta_result.signals),
             trends=len(trend_result.pre_arrival_trends),
         )
+
+        # Persist trending keywords for SEO descriptions (spec 5.2) — used
+        # by this cycle's builds and the daily update cycle
+        keywords = self._derive_keywords(meta_result, trend_result)
+        if keywords:
+            await self._set_state("latest_meta_keywords", json.dumps(keywords))
 
         # Step 2: Map to mechanics
         mapped = await self._mech_mapper.map_signals(
@@ -242,7 +269,9 @@ class Orchestrator:
 
         assert self._pool
         pipeline = BuildPipeline(self._pool)
-        output = await pipeline.run(concept.concept_id)
+        output = await pipeline.run(
+            concept.concept_id, meta_keywords=await self._get_meta_keywords()
+        )
         if output is None:
             await self._discord_alert(
                 f"Build failed for concept {concept.concept_id} "
@@ -298,7 +327,7 @@ class Orchestrator:
         try:
             new_breakouts = await self._breakout.run()
             if new_breakouts:
-                await self._regenerate_breakout_thumbnails(new_breakouts)
+                await self._regenerate_thumbnails(new_breakouts)
         except Exception:
             log.error("cycle.monitor.breakout_failed", traceback=traceback.format_exc())
 
@@ -317,8 +346,9 @@ class Orchestrator:
         except Exception:
             log.error("cycle.monitor.thresholds_failed", traceback=traceback.format_exc())
 
-    async def _regenerate_breakout_thumbnails(self, game_ids: list[str]) -> None:
-        """Spec 6.2 action 2: higher-effort FLUX thumbnail for new breakouts."""
+    async def _regenerate_thumbnails(self, game_ids: list[str]) -> None:
+        """Higher-effort FLUX thumbnail regen — used for new breakouts
+        (spec 6.2 action 2) and the monthly low-CTR refresh (spec 5.2)."""
         from build.asset_generator import AssetGenerator
         from publish.open_cloud_publisher import upload_thumbnail
 
@@ -357,6 +387,87 @@ class Orchestrator:
                 )
 
     # ─────────────────────────────────────────────────────────
+    # Live-game update cycle (spec 14)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_update_cycle(self) -> None:
+        """Daily: refresh games due per their cadence (breakout 1d, live 7d,
+        flagged 30d). All due games get a fresh SEO description; breakout
+        games additionally get a content drop (new place version)."""
+        assert self._pool and self._marketer
+        try:
+            due = await UpdateCadence.games_due_for_update(self._pool)
+        except Exception:
+            log.error("cycle.update.due_check_failed", traceback=traceback.format_exc())
+            return
+        if not due:
+            return
+        keywords = await self._get_meta_keywords()
+        for game in due:
+            game_id = str(game["id"])
+            try:
+                await self._marketer.refresh_for_games([game_id], keywords)
+                if game["status"] == "breakout":
+                    await self._breakout_content_drop(game)
+                await UpdateCadence.mark_updated(self._pool, game_id)
+            except Exception:
+                log.error(
+                    "cycle.update.game_failed",
+                    game=game["game_title"],
+                    traceback=traceback.format_exc(),
+                )
+        log.info("cycle.update.complete", due=len(due))
+
+    async def _breakout_content_drop(self, game) -> None:
+        """Spec 14: regenerate the breakout game's source from its stored
+        concept (fresh theme/balance pass) and push a new place version.
+        TODO: richer content drops need update-aware LuauAgent prompting
+        with the live game's source as context."""
+        from build.auto_validator import AutoValidator
+        from build.luau_agent import LuauAgent
+        from build.rojo_builder import RojoBuilder
+
+        assert self._pool and self._publisher
+        async with self._pool.acquire() as conn:
+            concept_json = await conn.fetchval(
+                """
+                SELECT cq.concept_json FROM published_games pg
+                JOIN concept_queue cq ON cq.id = pg.concept_id
+                WHERE pg.id = $1
+                """,
+                game["id"],
+            )
+        if concept_json is None:
+            return
+        concept = (
+            json.loads(concept_json) if isinstance(concept_json, str) else dict(concept_json)
+        )
+        build_dir = await LuauAgent().generate(concept, f"update_{game['id']}")
+        rojo_result = await RojoBuilder().build(build_dir)
+        validation = await AutoValidator().validate(build_dir, rojo_result)
+        if not validation.passed or rojo_result.rbxl_path is None:
+            log.warning(
+                "cycle.update.content_drop_invalid",
+                game=game["game_title"],
+                failures=validation.failures[:5],
+            )
+            return
+        await self._publisher.publish_update(game["genre_account"], rojo_result.rbxl_path)
+
+    # ─────────────────────────────────────────────────────────
+    # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_thumbnail_refresh(self) -> None:
+        assert self._marketer
+        try:
+            low_ctr_ids = await self._marketer.regenerate_low_ctr_thumbnails()
+            if low_ctr_ids:
+                await self._regenerate_thumbnails(low_ctr_ids)
+        except Exception:
+            log.error("cycle.thumbnail_refresh_failed", traceback=traceback.format_exc())
+
+    # ─────────────────────────────────────────────────────────
     # Weekly digest
     # ─────────────────────────────────────────────────────────
 
@@ -367,6 +478,48 @@ class Orchestrator:
             await self._reporter.weekly_digest()
         except Exception:
             log.error("cycle.weekly_digest.failed", traceback=traceback.format_exc())
+
+    # ─────────────────────────────────────────────────────────
+    # Shared state helpers
+    # ─────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _derive_keywords(meta_result, trend_result) -> list[str]:
+        """Trending keywords for SEO writing: signal genres + trend names,
+        deduped in order, capped at 15."""
+        seen: dict[str, None] = {}
+        for s in meta_result.signals:
+            if s.genre:
+                seen.setdefault(s.genre.strip(), None)
+        for t in trend_result.pre_arrival_trends:
+            if t.trend_name:
+                seen.setdefault(t.trend_name.strip(), None)
+        return list(seen)[:15]
+
+    async def _get_meta_keywords(self) -> list[str]:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            raw = await conn.fetchval(
+                "SELECT value FROM orchestrator_state WHERE key = 'latest_meta_keywords'"
+            )
+        try:
+            return json.loads(raw) if raw else []
+        except json.JSONDecodeError:
+            return []
+
+    async def _set_state(self, key: str, value: str) -> None:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO orchestrator_state (key, value, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                """,
+                key,
+                value,
+            )
 
     # ─────────────────────────────────────────────────────────
     # Alerts

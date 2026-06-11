@@ -215,6 +215,32 @@ class OpenCloudPublisher:
             place_id=account.place_id,
         )
 
+    async def publish_update(self, genre: str, rbxl_path: pathlib.Path) -> bool:
+        """Spec 14: push a new place version to an already-live game.
+        No new published_games row — the game keeps its identity."""
+        account = load_genre_account(genre)
+        async with httpx.AsyncClient(timeout=300) as client:
+            resp = await client.post(
+                f"{APIS_BASE}/universes/v1/{account.universe_id}"
+                f"/places/{account.place_id}/versions",
+                params={"versionType": "Published"},
+                headers={
+                    "x-api-key": account.api_key,
+                    "Content-Type": "application/octet-stream",
+                },
+                content=rbxl_path.read_bytes(),
+            )
+        if resp.status_code != 200:
+            log.warning(
+                "publisher.update_failed",
+                genre=genre,
+                status=resp.status_code,
+                body=resp.text[:300],
+            )
+            return False
+        log.info("publisher.update_published", genre=genre)
+        return True
+
     async def _is_rate_limited(self, genre: str) -> bool:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=PUBLISH_COOLDOWN_HOURS)
         async with self._pool.acquire() as conn:
