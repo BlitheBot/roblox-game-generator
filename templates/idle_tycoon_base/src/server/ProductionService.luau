@@ -57,10 +57,15 @@ function ProductionService.ComputeStats(player: Player): (number, number, number
 		end
 	end
 
-	-- Streak bonus from the drop-in RetentionService (absent → no-op)
+	-- Bonuses from drop-in systems (absent → no-op): RetentionService
+	-- streaks and MonetizationService VIP/season/founders multipliers
 	local streakMult = player:GetAttribute("StreakMultiplier")
 	if typeof(streakMult) == "number" then
 		value *= streakMult
+	end
+	local monetizationMult = player:GetAttribute("MonetizationMultiplier")
+	if typeof(monetizationMult) == "number" then
+		value *= monetizationMult
 	end
 
 	return value, math.max(0.25, interval), math.floor(droppers)

@@ -244,6 +244,31 @@ class LuauAgent:
             "{{RETENTION_REWARD_BOOST}}": _num("retention_reward_boost", 1),
         })
 
+        # Three-tier monetization config for MonetizationService
+        # (improvement 9). product_ids map platform-created developer
+        # product / game pass ids; they stay 0 until assigned post-publish,
+        # which hides those purchases client-side instead of breaking.
+        monetization_config = {
+            "shop_items": [
+                {
+                    "name": item.get("name", "Item"),
+                    "price": int(item.get("price", 100)),
+                    "type": item.get("type", "cosmetic"),
+                }
+                for item in monetization.get("shop_items", [])
+            ],
+            "casual_tier": monetization.get("casual_tier", {}),
+            "mid_tier": monetization.get("mid_tier", {}),
+            "whale_tier": monetization.get("whale_tier", {}),
+            "fomo": monetization.get("fomo", {}),
+            "product_ids": {
+                key: int(value)
+                for key, value in (monetization.get("product_ids") or {}).items()
+                if str(value).lstrip("-").isdigit()
+            },
+        }
+        substitutions["{{MONETIZATION_LUA}}"] = _to_lua(monetization_config)
+
         # Survival map list — content drops append variants via concept.maps
         maps = [str(m) for m in (concept.get("maps") or []) if str(m).strip()]
         substitutions["{{MAPS_LUA}}"] = _to_lua(

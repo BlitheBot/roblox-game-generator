@@ -107,6 +107,20 @@ grantCurrency.Event:Connect(function(player: Player, amount: number)
 	end
 end)
 
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	local data = sessionData[player.UserId]
+	if not data or typeof(amount) ~= "number" or amount <= 0 or data.Currency < amount then
+		return false
+	end
+	data.Currency -= amount
+	pushState(player)
+	return true
+end
+
 Players.PlayerAdded:Connect(function(player)
 	load(player)
 	task.spawn(function()
@@ -114,10 +128,15 @@ Players.PlayerAdded:Connect(function(player)
 			local data = sessionData[player.UserId]
 			if data then
 				local growth = computeRates(data)
-				-- Streak bonus from the drop-in RetentionService (absent → 1)
+				-- Bonuses from drop-in systems (absent → 1): retention
+				-- streaks and monetization multipliers
 				local streakMult = player:GetAttribute("StreakMultiplier")
 				if typeof(streakMult) == "number" then
 					growth *= streakMult
+				end
+				local monetizationMult = player:GetAttribute("MonetizationMultiplier")
+				if typeof(monetizationMult) == "number" then
+					growth *= monetizationMult
 				end
 				data.Resource += growth
 				pushState(player)

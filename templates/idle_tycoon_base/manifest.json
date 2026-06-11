@@ -16,7 +16,8 @@
         "{{RETENTION_REWARD_BOOST}}": "Numeric multiplier on milestone-streak daily rewards (LiveOps balance knob, default 1)",
         "{{BASE_DROP_VALUE}}": "Numeric base currency per drop (LiveOps balance knob, default 1)",
         "{{DROP_INTERVAL_SECONDS}}": "Numeric seconds between drops (LiveOps balance knob, default 2.0)",
-        "{{STARTING_CURRENCY}}": "Numeric starting currency (LiveOps balance knob, default 0)"
+        "{{STARTING_CURRENCY}}": "Numeric starting currency (LiveOps balance knob, default 0)",
+        "{{MONETIZATION_LUA}}": "Lua table literal of the three-tier monetization config (shop items, tiers, product ids)"
     },
     "files": [
         "default.project.json",
@@ -33,6 +34,8 @@
         "src/client/UpgradeUI.luau",
         "src/server/RetentionService.server.luau",
         "src/client/RetentionUI.client.luau",
-        "src/server/CrossPromoManager.server.luau"
+        "src/server/CrossPromoManager.server.luau",
+        "src/server/MonetizationService.server.luau",
+        "src/client/MonetizationUI.client.luau"
     ]
 }

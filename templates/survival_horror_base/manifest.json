@@ -14,7 +14,8 @@
         "{{CROSS_PROMO_LUA}}": "Lua table literal of sibling games on this genre account: {title, universe_id, place_id}",
         "{{RETENTION_REWARD_BOOST}}": "Numeric multiplier on milestone-streak daily rewards (LiveOps balance knob, default 1)",
         "{{SURVIVAL_REWARD}}": "Numeric currency for surviving a round (LiveOps balance knob, default 50)",
-        "{{MAPS_LUA}}": "Lua table literal of map names (LiveOps content drops can append variants)"
+        "{{MAPS_LUA}}": "Lua table literal of map names (LiveOps content drops can append variants)",
+        "{{MONETIZATION_LUA}}": "Lua table literal of the three-tier monetization config (shop items, tiers, product ids)"
     },
     "files": [
         "default.project.json",
@@ -24,6 +25,8 @@
         "src/client/Main.client.luau",
         "src/server/RetentionService.server.luau",
         "src/client/RetentionUI.client.luau",
-        "src/server/CrossPromoManager.server.luau"
+        "src/server/CrossPromoManager.server.luau",
+        "src/server/MonetizationService.server.luau",
+        "src/client/MonetizationUI.client.luau"
     ]
 }

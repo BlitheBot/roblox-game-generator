@@ -128,10 +128,15 @@ local function runRound()
 			local reward = Config.SurvivalReward
 			local player = Players:GetPlayerByUserId(userId)
 			if player then
-				-- Streak bonus from the drop-in RetentionService (absent → 1)
+				-- Bonuses from drop-in systems (absent → 1): retention
+				-- streaks and monetization multipliers
 				local streakMult = player:GetAttribute("StreakMultiplier")
 				if typeof(streakMult) == "number" then
 					reward = math.floor(reward * streakMult)
+				end
+				local monetizationMult = player:GetAttribute("MonetizationMultiplier")
+				if typeof(monetizationMult) == "number" then
+					reward = math.floor(reward * monetizationMult)
 				end
 			end
 			currency[userId] = (currency[userId] or 0) + reward
@@ -155,6 +160,19 @@ grantCurrency.Event:Connect(function(player: Player, amount: number)
 		currency[player.UserId] = (currency[player.UserId] or 0) + amount
 	end
 end)
+
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	local balance = currency[player.UserId]
+	if not balance or typeof(amount) ~= "number" or amount <= 0 or balance < amount then
+		return false
+	end
+	currency[player.UserId] = balance - amount
+	return true
+end
 
 Players.PlayerAdded:Connect(load)
 Players.PlayerRemoving:Connect(function(player)

@@ -50,6 +50,21 @@ grantCurrency.Event:Connect(function(player: Player, amount: number)
 	end
 end)
 
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	if typeof(amount) ~= "number" or amount <= 0 then
+		return false
+	end
+	local ok = DataService.TrySpend(player, amount)
+	if ok then
+		pushState(player)
+	end
+	return ok
+end
+
 local function onPlayerAdded(player: Player)
 	DataService.Load(player)
 	PlotService.Assign(player)
