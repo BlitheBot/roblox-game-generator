@@ -4,8 +4,11 @@ Runs the full intelligence → build → publish → monitor cycle every 6 hours
 Handles crash recovery, supervised mode, and Discord alerts.
 """
 import asyncio
+import json
 import os
+import pathlib
 import traceback
+import uuid
 from datetime import datetime, timezone
 
 import asyncpg
@@ -15,11 +18,14 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from db import get_pool, close_pool, run_migrations
+from intelligence.llm_client import set_spend_pool
 from intelligence.meta_scout import MetaScout
 from intelligence.trend_predictor import TrendPredictor
 from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
+from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor
+from publish.marketer import InRobloxMarketer
 
 log = structlog.get_logger()
 
@@ -45,11 +51,16 @@ class Orchestrator:
         self._scoring_eng:   ScoringEngine | None = None
         self._viability_gate: ViabilityGate | None = None
         self._feedback_loop:  FeedbackLoop | None  = None
+        self._reporter:      DiscordReporter | None = None
+        self._perf_monitor:  PerformanceMonitor | None = None
+        self._breakout:      BreakoutDetector | None = None
+        self._marketer:      InRobloxMarketer | None = None
 
     async def start(self) -> None:
         """Initialize DB, wire modules, schedule jobs, start scheduler."""
         self._pool = await get_pool()
         await run_migrations()
+        set_spend_pool(self._pool)
 
         self._meta_scout     = MetaScout()
         self._trend_pred     = TrendPredictor()
@@ -58,6 +69,10 @@ class Orchestrator:
         self._scoring_eng    = ScoringEngine()
         self._viability_gate = ViabilityGate(self._pool)
         self._feedback_loop  = FeedbackLoop()
+        self._reporter       = DiscordReporter(self._pool)
+        self._perf_monitor   = PerformanceMonitor(self._pool, self._reporter)
+        self._breakout       = BreakoutDetector(self._pool, self._reporter)
+        self._marketer       = InRobloxMarketer(self._pool)
 
         # Intelligence cycle — every 6 hours
         self._scheduler.add_job(
@@ -218,27 +233,91 @@ class Orchestrator:
 
     async def _run_monitor_cycle(self) -> None:
         """
-        Polls Roblox Analytics for live game metrics and runs FeedbackLoop.
-        Phase 3 will wire in PerformanceMonitor here.
+        Hourly: poll metrics, detect breakouts/moderation, settle A/B tests,
+        adjust signal weights, run big-decision threshold checks.
+        Each step is isolated so one failure doesn't kill the cycle.
         """
-        # TODO: wire PerformanceMonitor in Phase 3
-        if self._feedback_loop and self._pool:
+        assert self._pool and self._perf_monitor and self._breakout
+        assert self._marketer and self._feedback_loop and self._reporter
+
+        try:
+            await self._perf_monitor.run()
+            await self._perf_monitor.check_account_health()
+        except Exception:
+            log.error("cycle.monitor.metrics_failed", traceback=traceback.format_exc())
+
+        try:
+            new_breakouts = await self._breakout.run()
+            if new_breakouts:
+                await self._regenerate_breakout_thumbnails(new_breakouts)
+        except Exception:
+            log.error("cycle.monitor.breakout_failed", traceback=traceback.format_exc())
+
+        try:
+            await self._marketer.settle_ab_tests()
+        except Exception:
+            log.error("cycle.monitor.ab_settle_failed", traceback=traceback.format_exc())
+
+        try:
+            await self._feedback_loop.adjust_weights(self._pool)
+        except Exception:
+            log.error("cycle.monitor.feedback_failed", traceback=traceback.format_exc())
+
+        try:
+            await self._reporter.run_threshold_checks()
+        except Exception:
+            log.error("cycle.monitor.thresholds_failed", traceback=traceback.format_exc())
+
+    async def _regenerate_breakout_thumbnails(self, game_ids: list[str]) -> None:
+        """Spec 6.2 action 2: higher-effort FLUX thumbnail for new breakouts."""
+        from build.asset_generator import AssetGenerator
+        from publish.open_cloud_publisher import upload_thumbnail
+
+        assert self._pool
+        assets = AssetGenerator()
+        builds_root = pathlib.Path(os.environ.get("BUILDS_ROOT", "/builds"))
+        for game_id in game_ids:
             try:
-                await self._feedback_loop.adjust_weights(self._pool)
-            except Exception:
-                log.error("cycle.monitor.feedback_failed", traceback=traceback.format_exc())
+                async with self._pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        """
+                        SELECT pg.genre_account, cq.concept_json
+                        FROM published_games pg
+                        JOIN concept_queue cq ON cq.id = pg.concept_id
+                        WHERE pg.id = $1
+                        """,
+                        uuid.UUID(game_id),
+                    )
+                if row is None:
+                    continue
+                concept = (
+                    json.loads(row["concept_json"])
+                    if isinstance(row["concept_json"], str)
+                    else dict(row["concept_json"])
+                )
+                work_dir = builds_root / "active" / f"breakout_{game_id}"
+                work_dir.mkdir(parents=True, exist_ok=True)
+                generated = await assets.generate_all(concept, work_dir, alt_prompt=True)
+                await upload_thumbnail(row["genre_account"], generated["thumbnail"])
+                log.info("cycle.monitor.breakout_thumbnail_regenerated", game_id=game_id)
+            except Exception as exc:
+                log.warning(
+                    "cycle.monitor.breakout_thumbnail_failed",
+                    game_id=game_id,
+                    error=str(exc),
+                )
 
     # ─────────────────────────────────────────────────────────
     # Weekly digest
     # ─────────────────────────────────────────────────────────
 
     async def _run_weekly_digest(self) -> None:
-        """
-        Sends weekly performance summary via Discord.
-        Phase 3 will wire in DiscordReporter here.
-        """
-        # TODO: wire DiscordReporter in Phase 3
-        log.info("cycle.weekly_digest.stub_called")
+        """Sends the weekly performance summary via Discord (spec 6.4)."""
+        assert self._reporter
+        try:
+            await self._reporter.weekly_digest()
+        except Exception:
+            log.error("cycle.weekly_digest.failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # Alerts
@@ -246,19 +325,10 @@ class Orchestrator:
 
     async def _discord_alert(self, message: str) -> None:
         """Fire-and-forget Discord webhook alert."""
-        webhook_url = os.environ.get("DISCORD_WEBHOOK_URL", "")
-        if not webhook_url:
-            log.warning("orchestrator.discord_not_configured", message=message)
-            return
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(
-                    webhook_url,
-                    json={"content": f"[RobloxStudio] {message}"},
-                )
-        except Exception as exc:
-            log.error("orchestrator.discord_failed", error=str(exc))
+        if self._reporter:
+            await self._reporter.alert(message)
+        else:
+            log.warning("orchestrator.alert_before_start", message=message)
 
 
 async def main() -> None:

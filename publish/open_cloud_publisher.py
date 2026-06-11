@@ -62,6 +62,20 @@ def load_genre_account(genre: str) -> GenreAccount:
         ) from exc
 
 
+async def upload_thumbnail(genre: str, thumbnail_path: pathlib.Path) -> None:
+    """Standalone thumbnail upload — used by breakout regen (spec 6.2) and
+    low-CTR refresh (spec 5.2) outside the full publish flow."""
+    account = load_genre_account(genre)
+    async with httpx.AsyncClient(timeout=120) as client:
+        resp = await client.post(
+            f"{APIS_BASE}/universes/v1/{account.universe_id}/thumbnails",
+            headers={"x-api-key": account.api_key},
+            files={"file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")},
+        )
+        resp.raise_for_status()
+    log.info("publisher.thumbnail_refreshed", genre=genre)
+
+
 class OpenCloudPublisher:
     def __init__(self, pool: asyncpg.Pool) -> None:
         self._pool = pool

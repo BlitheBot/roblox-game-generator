@@ -118,11 +118,12 @@ class BuildPipeline:
 
         if not validation.passed:
             self._last_validation_error = "; ".join(validation.failures)[:2000]
+            # 'tos_flag' rows trigger an immediate Discord alert (spec 6.4)
+            stage = "tos_flag" if validation.tos_flagged else "auto_validator"
             await self._log_failure(
-                concept_id, "auto_validator", self._last_validation_error, model, 1
+                concept_id, stage, self._last_validation_error, model, 1
             )
             if validation.tos_flagged:
-                # Surface to the orchestrator's Discord alerting via status
                 log.error("pipeline.tos_flagged", concept_id=concept_id)
             return None
 

@@ -3,6 +3,7 @@ import json
 import os
 from typing import Any
 
+import asyncpg
 import httpx
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -10,6 +11,34 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 log = structlog.get_logger()
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+
+# Optional spend logging — when the orchestrator registers a pool, every
+# chat call records its cost to llm_spend (feeds the $15/7d alert, spec 6.4)
+_spend_pool: asyncpg.Pool | None = None
+
+
+def set_spend_pool(pool: asyncpg.Pool) -> None:
+    global _spend_pool
+    _spend_pool = pool
+
+
+async def _record_spend(model: str, usage: dict) -> None:
+    if _spend_pool is None:
+        return
+    try:
+        async with _spend_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO llm_spend (model, prompt_tokens, completion_tokens, cost_usd)
+                VALUES ($1, $2, $3, $4)
+                """,
+                model,
+                usage.get("prompt_tokens"),
+                usage.get("completion_tokens"),
+                float(usage.get("cost") or 0.0),
+            )
+    except Exception as exc:
+        log.warning("llm.spend_record_failed", error=str(exc))
 
 # Canonical model IDs on OpenRouter
 GEMINI_FLASH   = "google/gemini-flash-1.5"
@@ -41,6 +70,8 @@ async def chat(
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
+        # Ask OpenRouter to include cost (credits == USD) in the usage block
+        "usage": {"include": True},
     }
     if response_format:
         body["response_format"] = response_format
@@ -54,12 +85,15 @@ async def chat(
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]
+        usage = data.get("usage", {})
         log.debug(
             "llm.call",
             model=model,
-            prompt_tokens=data.get("usage", {}).get("prompt_tokens"),
-            completion_tokens=data.get("usage", {}).get("completion_tokens"),
+            prompt_tokens=usage.get("prompt_tokens"),
+            completion_tokens=usage.get("completion_tokens"),
+            cost_usd=usage.get("cost"),
         )
+        await _record_spend(model, usage)
         return content
 
 
