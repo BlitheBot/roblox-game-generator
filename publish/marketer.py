@@ -38,12 +38,19 @@ class InRobloxMarketer:
         """Generate the alternate thumbnail variant and record both arms."""
         concept = json.loads((build_dir / "concept.json").read_text(encoding="utf-8"))
         try:
-            await self._assets.generate_all(
-                concept, build_dir, alt_prompt=True
-            )
-            # alternate overwrote thumbnail.png; keep both on disk
-            alt_path = build_dir / "thumbnail_alt.png"
-            (build_dir / "thumbnail.png").rename(alt_path)
+            # generate_all writes over the primary assets — preserve them so
+            # both A/B arms exist on disk and icon/description stay intact
+            preserved: dict[str, bytes] = {}
+            for name in ("thumbnail.png", "icon.png", "description.txt"):
+                f = build_dir / name
+                if f.exists():
+                    preserved[name] = f.read_bytes()
+
+            await self._assets.generate_all(concept, build_dir, alt_prompt=True)
+            (build_dir / "thumbnail.png").replace(build_dir / "thumbnail_alt.png")
+
+            for name, data in preserved.items():
+                (build_dir / name).write_bytes(data)
         except Exception as exc:
             log.warning("marketer.alt_thumbnail_failed", game_id=game_id, error=str(exc))
             return
