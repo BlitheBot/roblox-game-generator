@@ -221,7 +221,20 @@ class ApprovalGate:
             log.warning("approval_gate.cross_promo_failed", error=str(exc))
         # Spec 18: archive the published build, prune to the newest
         # MAX_BUILDS_PER_GENRE per genre
-        archive_build(pathlib.Path(row["build_dir"]), row["genre"])
+        archived = archive_build(pathlib.Path(row["build_dir"]), row["genre"])
+        # Marketing video (improvement 7): generate + publish the short-form
+        # promo after every successful publish (gated by env, never fatal)
+        try:
+            from marketing.video_pipeline import VideoPipeline, marketing_enabled
+
+            if marketing_enabled():
+                assert result.game_id
+                await VideoPipeline(self._pool, self._reporter, self._bot).run(
+                    result.game_id,
+                    archived or pathlib.Path(row["build_dir"]),
+                )
+        except Exception as exc:
+            log.warning("approval_gate.marketing_video_failed", error=str(exc))
         log.info(
             "approval_gate.published",
             game_id=str(row["game_id"]),
