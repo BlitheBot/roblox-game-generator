@@ -12,6 +12,7 @@ itself; SUPERVISED_MODE=true re-enables it at any time.
 In autonomous mode the same queue is used with rows pre-approved, so
 every publish gets the rate-limit retry semantics for free.
 """
+import json
 import os
 import pathlib
 import uuid
@@ -20,11 +21,12 @@ from typing import TYPE_CHECKING
 import asyncpg
 import structlog
 
+from intelligence.llm_client import DEEPSEEK_V3, chat
 from monitor.discord_reporter import DiscordReporter
 
 from .build_archive import archive_build, discard_build
 from .marketer import InRobloxMarketer
-from .open_cloud_publisher import OpenCloudPublisher, dry_run_enabled
+from .open_cloud_publisher import OpenCloudPublisher, PublishResult, dry_run_enabled
 
 if TYPE_CHECKING:
     from build.pipeline import BuildOutput
@@ -210,6 +212,12 @@ class ApprovalGate:
             )
         except Exception as exc:
             log.warning("approval_gate.ab_test_failed", error=str(exc))
+        # Spec 15: localized description published as an update right after
+        # the English version (well within the 24h window)
+        try:
+            await self._publish_localized_update(row, result, marketer)
+        except Exception as exc:
+            log.warning("approval_gate.localization_failed", error=str(exc))
         # Spec 18: archive the published build, prune to the newest
         # MAX_BUILDS_PER_GENRE per genre
         archive_build(pathlib.Path(row["build_dir"]), row["genre"])
@@ -221,6 +229,55 @@ class ApprovalGate:
         # Only operator-decided rows count toward the 5-approval target
         if row["decided_at"] is not None and row["status"] == "approved":
             await self._count_approval()
+
+    async def _publish_localized_update(
+        self, row, result: PublishResult, marketer: InRobloxMarketer
+    ) -> None:
+        """Spec 15: when the source trend originates from a non-English
+        market (ES/PT/DE/FR/PH), translate the description via DeepSeek V3
+        and push it as a metadata update. The English version always goes
+        live first; metadata only — no in-game text translation."""
+        from build.concept_generator import LOCALIZATION_LANGUAGES
+
+        async with self._pool.acquire() as conn:
+            seed_json = await conn.fetchval(
+                "SELECT concept_json FROM concept_queue WHERE id = $1",
+                row["concept_id"],
+            )
+        if seed_json is None:
+            return
+        seed = json.loads(seed_json) if isinstance(seed_json, str) else dict(seed_json)
+        origin = str(seed.get("platform_origin_country") or "US").upper()
+        language = LOCALIZATION_LANGUAGES.get(origin)
+        if language is None or not row["description"]:
+            return
+
+        translated = await chat(
+            DEEPSEEK_V3,
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        f"Translate this Roblox game description into {language}. "
+                        "Keep the tone, emoji, and any game-specific names unchanged. "
+                        "Max 1000 characters. Output the translated text only."
+                    ),
+                },
+                {"role": "user", "content": row["description"]},
+            ],
+            temperature=0.3,
+            max_tokens=600,
+        )
+        translated = translated.strip().strip('"')[:1000]
+        if not translated:
+            return
+        assert result.universe_id is not None
+        await marketer._push_description(row["genre"], result.universe_id, translated)
+        log.info(
+            "approval_gate.localized_description_published",
+            game_id=str(row["game_id"]),
+            language=language,
+        )
 
     async def _mark_processed(self, game_id) -> None:
         async with self._pool.acquire() as conn:

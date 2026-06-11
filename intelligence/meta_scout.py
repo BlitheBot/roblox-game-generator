@@ -27,6 +27,9 @@ class Signal:
     signal_strength: float
     source: str
     sustained_ccu_indicator: bool
+    # Spec 15: country where the trend predominantly originates; non-English
+    # markets (ES, PT, DE, FR, PH) flag the game for localization downstream
+    platform_origin_country: str = "US"
 
 
 @dataclass
@@ -157,8 +160,12 @@ class MetaScout:
                     "signal strength (0.0–1.0), and whether it shows sustained CCU. "
                     "Valid mechanic_tags: idle_tycoon, pet_collect, survival_horror, "
                     "obby, rpg_dungeon, incremental_sim. "
+                    "Also tag each signal with platform_origin_country — the ISO 3166 "
+                    "country code where the trend predominantly originates (e.g. US, ES, "
+                    "PT, DE, FR, PH); use US when unclear. "
                     "Return JSON with key 'signals' containing an array of objects each with: "
-                    "genre, mechanic_tag, signal_strength, source, sustained_ccu_indicator."
+                    "genre, mechanic_tag, signal_strength, source, sustained_ccu_indicator, "
+                    "platform_origin_country."
                 ),
             },
             {
@@ -177,6 +184,9 @@ class MetaScout:
                         signal_strength=float(s["signal_strength"]),
                         source=s["source"],
                         sustained_ccu_indicator=bool(s.get("sustained_ccu_indicator", False)),
+                        platform_origin_country=str(
+                            s.get("platform_origin_country") or "US"
+                        ).upper(),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

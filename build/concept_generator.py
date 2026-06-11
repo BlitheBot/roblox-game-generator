@@ -13,6 +13,17 @@ from intelligence.llm_client import DEEPSEEK_V3, chat_json
 
 log = structlog.get_logger()
 
+# Spec 15: trends originating predominantly from these non-English markets
+# flag the game for localized description/metadata (published as an update
+# within 24h of the English version — see ApprovalGate)
+LOCALIZATION_LANGUAGES = {
+    "ES": "Spanish",
+    "PT": "Portuguese",
+    "DE": "German",
+    "FR": "French",
+    "PH": "Filipino",
+}
+
 # Maps mechanic_tag → genre account name (spec Section 2)
 GENRE_ACCOUNTS = {
     "idle_tycoon":     "idle",
@@ -85,6 +96,16 @@ class ConceptGenerator:
         # Enforce invariants regardless of what the model returned
         concept["mechanic_tag"] = mechanic_tag
         concept["target_genre_account"] = GENRE_ACCOUNTS.get(mechanic_tag, "sim")
+
+        # Spec 15: flag for localization when the source trend originates
+        # from a non-English market
+        origin = str(seed.get("platform_origin_country") or "US").upper()
+        language = LOCALIZATION_LANGUAGES.get(origin)
+        concept["localization"] = {
+            "flagged": language is not None,
+            "origin_country": origin,
+            "language": language or "English",
+        }
         concept.setdefault("toolbox_keywords", [])
         concept.setdefault("monetization", {})
         concept["monetization"].setdefault("game_passes", [])
