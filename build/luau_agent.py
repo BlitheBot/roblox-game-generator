@@ -182,6 +182,16 @@ class LuauAgent:
             for asset in concept.get("resolved_assets", [])
             if str(asset.get("asset_id", "")).isdigit()
         ])
+        # Sibling games on the same genre account (cross-promotion billboards);
+        # the pipeline injects cross_promo_siblings before generation
+        cross_promo_lua = _to_lua([
+            {
+                "title": str(s.get("title", "")),
+                "universe_id": int(s.get("universe_id", 0)),
+                "place_id": int(s.get("place_id", 0)),
+            }
+            for s in concept.get("cross_promo_siblings", [])
+        ])
 
         substitutions: dict[str, str] = {
             "{{GAME_TITLE}}": concept.get("game_title", "Untitled Game"),
@@ -190,6 +200,7 @@ class LuauAgent:
             "{{SHOP_ITEMS_LUA}}": shop_items_lua,
             "{{VIP_SERVER_ENABLED}}": "true" if monetization.get("vip_server") else "false",
             "{{TOOLBOX_ASSET_IDS_LUA}}": asset_ids_lua,
+            "{{CROSS_PROMO_LUA}}": cross_promo_lua,
             "{{ROUND_SECONDS}}": "120",
         }
 

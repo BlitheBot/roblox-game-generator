@@ -10,7 +10,8 @@
         "{{GAME_PASSES_LUA}}": "Lua table literal of game passes",
         "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items",
         "{{VIP_SERVER_ENABLED}}": "true|false",
-        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids",
+        "{{CROSS_PROMO_LUA}}": "Lua table literal of sibling games on this genre account: {title, universe_id, place_id}"
     },
     "files": [
         "default.project.json",
@@ -18,6 +19,7 @@
         "src/server/Main.server.luau",
         "src/client/Main.client.luau",
         "src/server/RetentionService.server.luau",
-        "src/client/RetentionUI.client.luau"
+        "src/client/RetentionUI.client.luau",
+        "src/server/CrossPromoManager.server.luau"
     ]
 }

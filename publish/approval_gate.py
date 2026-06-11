@@ -210,6 +210,15 @@ class ApprovalGate:
             )
         except Exception as exc:
             log.warning("approval_gate.ab_test_failed", error=str(exc))
+        # Cross-promotion (improvement 5): queue sibling games on this
+        # account for a billboard refresh on the next update cycle
+        try:
+            from build.cross_promotion import on_game_published
+
+            assert result.game_id
+            await on_game_published(self._pool, result.game_id)
+        except Exception as exc:
+            log.warning("approval_gate.cross_promo_failed", error=str(exc))
         # Spec 18: archive the published build, prune to the newest
         # MAX_BUILDS_PER_GENRE per genre
         archive_build(pathlib.Path(row["build_dir"]), row["genre"])

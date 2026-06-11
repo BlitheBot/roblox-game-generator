@@ -465,8 +465,16 @@ class Orchestrator:
             game_id = str(game["id"])
             try:
                 await self._marketer.refresh_for_games([game_id], keywords)
-                if game["status"] == "breakout":
-                    await self._breakout_content_drop(game)
+                # Breakouts get their daily content drop; any game with a
+                # pending cross-promo marker gets a rebuilt place version
+                # so new sibling billboards actually ship (improvement 5)
+                cross_promo_pending = (
+                    await self._get_state(f"cross_promo_refresh:{game_id}")
+                ) == "pending"
+                if game["status"] == "breakout" or cross_promo_pending:
+                    await self._content_drop(game)
+                    if cross_promo_pending:
+                        await self._clear_state(f"cross_promo_refresh:{game_id}")
                 await UpdateCadence.mark_updated(self._pool, game_id)
             except Exception:
                 log.error(
@@ -476,12 +484,15 @@ class Orchestrator:
                 )
         log.info("cycle.update.complete", due=len(due))
 
-    async def _breakout_content_drop(self, game) -> None:
-        """Spec 14: regenerate the breakout game's source from its stored
-        concept (fresh theme/balance pass) and push a new place version.
+    async def _content_drop(self, game) -> None:
+        """Spec 14: regenerate the game's source from its stored concept
+        (fresh theme/balance pass + current sibling billboards) and push a
+        new place version. Used for breakout daily drops and cross-promo
+        billboard refreshes.
         TODO: richer content drops need update-aware LuauAgent prompting
         with the live game's source as context."""
         from build.auto_validator import AutoValidator
+        from build.cross_promotion import get_siblings
         from build.luau_agent import LuauAgent
         from build.rojo_builder import RojoBuilder
 
@@ -499,6 +510,9 @@ class Orchestrator:
             return
         concept = (
             json.loads(concept_json) if isinstance(concept_json, str) else dict(concept_json)
+        )
+        concept["cross_promo_siblings"] = await get_siblings(
+            self._pool, game["genre_account"], exclude_game_id=str(game["id"])
         )
         build_dir = await LuauAgent().generate(concept, f"update_{game['id']}")
         rojo_result = await RojoBuilder().build(build_dir)
@@ -596,6 +610,20 @@ class Orchestrator:
             return json.loads(raw) if raw else []
         except json.JSONDecodeError:
             return []
+
+    async def _get_state(self, key: str) -> str | None:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT value FROM orchestrator_state WHERE key = $1", key
+            )
+
+    async def _clear_state(self, key: str) -> None:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM orchestrator_state WHERE key = $1", key
+            )
 
     async def _set_state(self, key: str, value: str) -> None:
         assert self._pool
