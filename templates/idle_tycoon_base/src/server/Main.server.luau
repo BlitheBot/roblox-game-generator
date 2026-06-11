@@ -5,6 +5,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local DataService = require(script.Parent.DataService)
@@ -36,6 +37,18 @@ local function pushState(player: Player)
 		CanPrestige = PrestigeService.CanPrestige(player),
 	})
 end
+
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	if typeof(amount) == "number" and amount > 0 then
+		DataService.AddCurrency(player, amount)
+		pushState(player)
+	end
+end)
 
 local function onPlayerAdded(player: Player)
 	DataService.Load(player)

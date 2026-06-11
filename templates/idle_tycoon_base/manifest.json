@@ -25,6 +25,8 @@
         "src/server/ShopService.luau",
         "src/client/Main.client.luau",
         "src/client/HUD.luau",
-        "src/client/UpgradeUI.luau"
+        "src/client/UpgradeUI.luau",
+        "src/server/RetentionService.server.luau",
+        "src/client/RetentionUI.client.luau"
     ]
 }

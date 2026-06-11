@@ -5,6 +5,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local MonsterAI = require(script.Parent.MonsterAI)
@@ -124,8 +125,16 @@ local function runRound()
 	local survivors = {}
 	for userId, isAlive in alive do
 		if isAlive then
-			currency[userId] = (currency[userId] or 0) + Config.SurvivalReward
+			local reward = Config.SurvivalReward
 			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				-- Streak bonus from the drop-in RetentionService (absent → 1)
+				local streakMult = player:GetAttribute("StreakMultiplier")
+				if typeof(streakMult) == "number" then
+					reward = math.floor(reward * streakMult)
+				end
+			end
+			currency[userId] = (currency[userId] or 0) + reward
 			if player then
 				table.insert(survivors, player.Name)
 				save(player)
@@ -135,6 +144,17 @@ local function runRound()
 	broadcast({ Survivors = survivors })
 	task.wait(5)
 end
+
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	if typeof(amount) == "number" and amount > 0 then
+		currency[player.UserId] = (currency[player.UserId] or 0) + amount
+	end
+end)
 
 Players.PlayerAdded:Connect(load)
 Players.PlayerRemoving:Connect(function(player)

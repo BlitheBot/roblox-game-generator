@@ -7,6 +7,7 @@ local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 
@@ -106,6 +107,19 @@ local function pushState(player: Player)
 	})
 end
 
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	local data = sessionData[player.UserId]
+	if data and typeof(amount) == "number" and amount > 0 then
+		data.Currency += amount
+		pushState(player)
+	end
+end)
+
 Players.PlayerAdded:Connect(function(player)
 	load(player)
 	pushState(player)
@@ -113,7 +127,10 @@ Players.PlayerAdded:Connect(function(player)
 		while player.Parent do
 			local data = sessionData[player.UserId]
 			if data then
-				data.Currency += Config.BaseIncomePerSecond * equippedPower(data)
+				-- Streak bonus from the drop-in RetentionService (absent → 1)
+				local streakMult = player:GetAttribute("StreakMultiplier")
+				local mult = if typeof(streakMult) == "number" then streakMult else 1
+				data.Currency += Config.BaseIncomePerSecond * equippedPower(data) * mult
 				pushState(player)
 			end
 			task.wait(1)

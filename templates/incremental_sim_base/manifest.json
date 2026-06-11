@@ -16,6 +16,8 @@
         "default.project.json",
         "src/shared/Config.luau",
         "src/server/Main.server.luau",
-        "src/client/Main.client.luau"
+        "src/client/Main.client.luau",
+        "src/server/RetentionService.server.luau",
+        "src/client/RetentionUI.client.luau"
     ]
 }

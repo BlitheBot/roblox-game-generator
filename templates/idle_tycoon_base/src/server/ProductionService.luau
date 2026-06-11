@@ -57,6 +57,12 @@ function ProductionService.ComputeStats(player: Player): (number, number, number
 		end
 	end
 
+	-- Streak bonus from the drop-in RetentionService (absent → no-op)
+	local streakMult = player:GetAttribute("StreakMultiplier")
+	if typeof(streakMult) == "number" then
+		value *= streakMult
+	end
+
 	return value, math.max(0.25, interval), math.floor(droppers)
 end
 
