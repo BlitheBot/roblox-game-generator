@@ -164,6 +164,18 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # 48h description refresh (improvement 4) — checked every 6 hours
+        # so each game refreshes as soon as its 48h window lapses
+        self._scheduler.add_job(
+            self._run_description_refresh,
+            trigger=IntervalTrigger(hours=6),
+            id="description_refresh_48h",
+            name="48h SEO Description Refresh",
+            replace_existing=True,
+            misfire_grace_time=1800,
+            coalesce=True,
+        )
+
         # Name blacklist refresh — every 24h (get_blacklist() also lazily
         # refreshes on read, this keeps the file warm between builds)
         self._scheduler.add_job(
@@ -501,6 +513,24 @@ class Orchestrator:
         await self._publisher.publish_update(
             game["genre_account"], game["place_id"], rojo_result.rbxl_path
         )
+
+    # ─────────────────────────────────────────────────────────
+    # 48h description refresh (improvement 4)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_description_refresh(self) -> None:
+        """Refresh the SEO description of every live game whose last
+        refresh is older than 48h, using the latest MetaScout keywords."""
+        assert self._marketer
+        try:
+            keywords = await self._get_meta_keywords()
+            refreshed = await self._marketer.refresh_due_descriptions(keywords)
+            if refreshed:
+                log.info("cycle.description_refresh.complete", refreshed=refreshed)
+        except Exception:
+            log.error(
+                "cycle.description_refresh_failed", traceback=traceback.format_exc()
+            )
 
     # ─────────────────────────────────────────────────────────
     # Name blacklist refresh (24h)

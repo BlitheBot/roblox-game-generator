@@ -213,8 +213,8 @@ class OpenCloudPublisher:
                 """
                 INSERT INTO published_games
                     (id, concept_id, universe_id, place_id, genre_account,
-                     published_at, game_title, status)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, 'live')
+                     published_at, game_title, status, last_description_refresh)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, 'live', NOW())
                 """,
                 uuid.UUID(game_id),
                 uuid.UUID(concept_id),
