@@ -25,6 +25,7 @@ from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
 from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor, UpdateCadence
+from monitor.failure_memory import FailureMemory
 from publish.approval_gate import ApprovalGate
 from publish.discord_bot import ApprovalBot, create_bot
 from publish.marketer import InRobloxMarketer
@@ -60,6 +61,7 @@ class Orchestrator:
         self._marketer:      InRobloxMarketer | None = None
         self._publisher:     OpenCloudPublisher | None = None
         self._approval_gate: ApprovalGate | None = None
+        self._failure_memory: FailureMemory | None = None
         self._bot:           ApprovalBot | None = None
         self._bot_task:      asyncio.Task | None = None
 
@@ -82,6 +84,7 @@ class Orchestrator:
         self._breakout       = BreakoutDetector(self._pool, self._reporter)
         self._marketer       = InRobloxMarketer(self._pool)
         self._publisher      = OpenCloudPublisher(self._pool)
+        self._failure_memory = FailureMemory(self._pool)
         self._bot            = create_bot(self._pool)
         self._approval_gate  = ApprovalGate(self._pool, self._reporter, self._bot)
 
@@ -273,9 +276,12 @@ class Orchestrator:
         # Step 4: Load signal weights (FeedbackLoop adjustments)
         signal_weights = await self._feedback_loop.get_weights(self._pool)
 
-        # Step 5: Score
+        # Step 5: Score (hard-excluding FailureMemory-suppressed combos)
+        assert self._failure_memory
+        suppressed = await self._failure_memory.get_suppressed()
         scored = self._scoring_eng.score(
-            meta_result, trend_result, mapped, gap_results, signal_weights
+            meta_result, trend_result, mapped, gap_results, signal_weights,
+            suppressed_combos=suppressed,
         )
         log.info("cycle.scored", count=len(scored), top_score=scored[0].opportunity_score if scored else 0)
 
@@ -398,6 +404,21 @@ class Orchestrator:
             await self._feedback_loop.adjust_weights(self._pool)
         except Exception:
             log.error("cycle.monitor.feedback_failed", traceback=traceback.format_exc())
+
+        # FailureMemory (improvement 6): record games dead after 30 days,
+        # alert when a mechanic+genre combo hits permanent suppression
+        try:
+            assert self._failure_memory
+            newly_suppressed = await self._failure_memory.record_failures()
+            for mechanic, genre in newly_suppressed:
+                await self._discord_alert(
+                    f"⛔ Combo **{mechanic} / {genre}** permanently suppressed "
+                    f"after 3 failed games (<5 CCU after 30 days). The scoring "
+                    f"engine will skip it. Re-enable with `!unsuppress "
+                    f"{mechanic} {genre}`."
+                )
+        except Exception:
+            log.error("cycle.monitor.failure_memory_failed", traceback=traceback.format_exc())
 
         try:
             await self._reporter.run_threshold_checks()

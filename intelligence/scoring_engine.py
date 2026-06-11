@@ -67,12 +67,16 @@ class ScoringEngine:
         mapped_signals: list[MappedSignal],
         gap_results: list[GapAnalysisResult],
         signal_weights: dict[str, float],
+        suppressed_combos: set[tuple[str, str]] | None = None,
     ) -> list[ScoredConcept]:
         """
         For each gap result, find best matching meta/trend signal and
-        compute weighted opportunity score.
+        compute weighted opportunity score. Combos in `suppressed_combos`
+        (FailureMemory, improvement 6) are hard-excluded regardless of
+        signal strength.
         """
         season = get_seasonal_context()
+        suppressed = suppressed_combos or set()
 
         # Index meta signals and trend signals by mechanic_tag
         meta_by_tag: dict[str, list[Signal]] = {}
@@ -86,6 +90,17 @@ class ScoringEngine:
         scored: list[ScoredConcept] = []
         for gap in gap_results:
             tag = gap.mechanic_tag
+
+            # FailureMemory hard-exclusion — this combo produced 3+ dead
+            # games; no signal strength overrides it
+            if (tag, gap.raw_genre) in suppressed:
+                log.info(
+                    "scoring_engine.combo_suppressed",
+                    mechanic=tag,
+                    genre=gap.raw_genre,
+                )
+                continue
+
             tag_weight = signal_weights.get(tag, 1.0)
 
             # Best matching meta signal for this mechanic
