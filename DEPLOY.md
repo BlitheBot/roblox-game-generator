@@ -71,9 +71,12 @@ Fill in `.env` (see spec Sections 9 and 11):
 
 - `DATABASE_URL=postgresql://studio:CHANGE_ME@127.0.0.1:5432/roblox_studio`
 - `OPENROUTER_API_KEY` — from openrouter.ai
-- `ROBLOX_API_KEY_IDLE/HORROR/SIM` + universe/place ids — one set per genre
-  account (create accounts + one blank published place each, generate Open
-  Cloud keys with publish permissions; spec Section 11)
+- `ROBLOX_API_KEY_IDLE/HORROR/SIM` + `ROBLOX_UNIVERSE_ID_*` — one set per
+  genre account (create accounts, generate Open Cloud keys with publish
+  permissions; spec Section 11)
+- `ROBLOX_PLACE_IDS_*` — comma-separated pool of pre-created place ids per
+  account (each game occupies its own place, spec 13; start with 1–5 blank
+  published places and add more when the Discord capacity alert fires)
 - `DISCORD_WEBHOOK_URL` — alerts + weekly digest channel
 - `DISCORD_BOT_TOKEN` + `DISCORD_OWNER_ID` — DM approval flow (create a bot
   at discord.com/developers, enable the *Message Content* intent, DM it once
@@ -142,4 +145,5 @@ sudo systemctl restart roblox-studio
 | `rojo build failed … project manifest` | PATH rojo is a Rokit shim — set `ROJO_BINARY` |
 | No Discord DMs | Bot token/owner id unset, or Message Content intent disabled; previews fall back to the webhook channel |
 | Publishes deferred | 4h per-account cooldown (spec 5.1) or genre account paused — `!resume <genre>` after review |
-| `meta_scout.source_failed … list-json 404` | The legacy top-games endpoint has drifted; the cycle degrades to the other sources. Known TODO. |
+| Publish fails with `no free place` | Place pool exhausted — create a new place on that account and append its id to `ROBLOX_PLACE_IDS_*` |
+| Model errors on every LLM call | OpenRouter may have delisted a model — override via `LLM_MODEL_*` / `IMAGE_MODEL` in `.env` |
