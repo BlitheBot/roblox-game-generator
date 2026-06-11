@@ -191,6 +191,29 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # LiveOps weekly cycle (improvement 8) — Mondays 10:00, independent
+        # of the 6-hour generation cycle; gated by ENABLE_LIVEOPS
+        self._scheduler.add_job(
+            self._run_liveops_cycle,
+            trigger=CronTrigger(day_of_week="mon", hour=10, minute=0),
+            id="liveops_weekly",
+            name="Weekly LiveOps Cycle",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
+        # Seasonal reskin revert check — daily 06:00
+        self._scheduler.add_job(
+            self._run_seasonal_reverts,
+            trigger=CronTrigger(hour=6, minute=0),
+            id="seasonal_reverts",
+            name="Seasonal Reskin Revert Check",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
         # Low-CTR thumbnail refresh — monthly on the 1st (spec 5.2 phase 2)
         self._scheduler.add_job(
             self._run_thumbnail_refresh,
@@ -548,6 +571,37 @@ class Orchestrator:
         await self._publisher.publish_update(
             game["genre_account"], game["place_id"], rojo_result.rbxl_path
         )
+
+    # ─────────────────────────────────────────────────────────
+    # LiveOps (improvement 8)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_liveops_cycle(self) -> None:
+        assert self._pool and self._publisher and self._reporter
+        try:
+            from liveops.liveops_pipeline import LiveOpsPipeline
+
+            pipeline = LiveOpsPipeline(self._pool, self._publisher, self._reporter)
+            await pipeline.run_weekly_cycle(await self._get_meta_keywords())
+        except Exception:
+            log.error("cycle.liveops_failed", traceback=traceback.format_exc())
+            await self._discord_alert(
+                "Weekly LiveOps cycle crashed — check logs. Will retry next Monday."
+            )
+
+    async def _run_seasonal_reverts(self) -> None:
+        assert self._pool
+        try:
+            from liveops.seasonal_reskin import revert_due_overrides
+
+            reverted = await revert_due_overrides(self._pool)
+            for title in reverted:
+                await self._discord_alert(
+                    f"🔄 Seasonal reskin reverted: **{title}** — original title, "
+                    f"description, and thumbnail restored."
+                )
+        except Exception:
+            log.error("cycle.seasonal_revert_failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # 48h description refresh (improvement 4)
