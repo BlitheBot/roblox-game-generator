@@ -139,10 +139,18 @@ class ApprovalGate:
                 """
             )
         for row in rows:
-            if row["status"] == "skipped":
-                await self._finalize_skip(row)
-            else:
-                await self._publish_approved(row, publisher, marketer)
+            # One row's failure must not block the rest of the queue
+            try:
+                if row["status"] == "skipped":
+                    await self._finalize_skip(row)
+                else:
+                    await self._publish_approved(row, publisher, marketer)
+            except Exception as exc:
+                log.error(
+                    "approval_gate.row_failed",
+                    game_id=str(row["game_id"]),
+                    error=str(exc),
+                )
 
     async def _finalize_skip(self, row) -> None:
         async with self._pool.acquire() as conn:

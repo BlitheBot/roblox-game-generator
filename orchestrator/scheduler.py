@@ -89,6 +89,21 @@ class Orchestrator:
         token = os.environ.get("DISCORD_BOT_TOKEN", "")
         if self._bot is not None and token:
             self._bot_task = asyncio.create_task(self._bot.start(token))
+            self._bot_task.add_done_callback(self._on_bot_exit)
+
+    def _on_bot_exit(self, task: asyncio.Task) -> None:
+        """A dead bot means approvals stall silently — make it loud."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error("discord_bot.crashed", error=repr(exc))
+            asyncio.get_running_loop().create_task(
+                self._discord_alert(
+                    f"Approval bot crashed ({exc!r}) — supervised publishes "
+                    f"will queue until the service restarts."
+                )
+            )
 
     async def start(self) -> None:
         """Initialize, schedule all jobs, start the scheduler loop."""
@@ -252,7 +267,7 @@ class Orchestrator:
                 self._pool, consecutive_rejects + 1
             )
 
-        if gate_result.fallback_triggered:
+        if gate_result.fallback_triggered and scored:
             await self._discord_alert(
                 f"Viability gate in fallback mode — threshold lowered to "
                 f"{gate_result.threshold_used}. "
@@ -266,9 +281,17 @@ class Orchestrator:
             threshold=gate_result.threshold_used,
         )
 
-        # Step 7: Hand off to build pipeline (Phase 2 — wired later)
+        # Step 7: Hand off to build pipeline — one concept's crash must not
+        # take down the rest of this cycle's builds
         for concept in gate_result.passing:
-            await self._dispatch_to_build(concept)
+            try:
+                await self._dispatch_to_build(concept)
+            except Exception:
+                log.error(
+                    "cycle.build_dispatch_crashed",
+                    concept_id=concept.concept_id,
+                    traceback=traceback.format_exc(),
+                )
 
     async def _dispatch_to_build(self, concept) -> None:
         """Hand off a passing concept to the Build Pipeline (L2)."""

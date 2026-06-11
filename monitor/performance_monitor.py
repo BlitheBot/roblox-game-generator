@@ -39,30 +39,38 @@ class PerformanceMonitor:
         now = datetime.now(timezone.utc)
         async with self._pool.acquire() as conn:
             for game in games:
-                stats = live_stats.get(game["universe_id"])
-                if stats is None:
-                    # Universe missing from the public API response — likely
-                    # moderated/taken down (spec 16)
-                    await self._handle_possible_moderation(game)
-                    continue
+                # One bad row must not cost the rest of this hour's metrics
+                try:
+                    stats = live_stats.get(game["universe_id"])
+                    if stats is None:
+                        # Universe missing from the public API response —
+                        # likely moderated/taken down (spec 16)
+                        await self._handle_possible_moderation(game)
+                        continue
 
-                await conn.execute(
-                    """
-                    INSERT INTO game_metrics
-                        (id, game_id, timestamp, ccu, session_length_avg,
-                         d1_retention, d7_retention, revenue_robux, thumbnail_ctr)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                    """,
-                    uuid.uuid4(),
-                    game["id"],
-                    now,
-                    stats["playing"],
-                    None,  # TODO: session length via Open Cloud Analytics API
-                    None,  # TODO: D1 retention via Open Cloud Analytics API
-                    None,  # TODO: D7 retention via Open Cloud Analytics API
-                    0,     # TODO: revenue via Open Cloud economy/analytics API
-                    None,  # TODO: thumbnail CTR via Open Cloud Analytics API
-                )
+                    await conn.execute(
+                        """
+                        INSERT INTO game_metrics
+                            (id, game_id, timestamp, ccu, session_length_avg,
+                             d1_retention, d7_retention, revenue_robux, thumbnail_ctr)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                        """,
+                        uuid.uuid4(),
+                        game["id"],
+                        now,
+                        stats["playing"],
+                        None,  # TODO: session length via Open Cloud Analytics API
+                        None,  # TODO: D1 retention via Open Cloud Analytics API
+                        None,  # TODO: D7 retention via Open Cloud Analytics API
+                        0,     # TODO: revenue via Open Cloud economy/analytics API
+                        None,  # TODO: thumbnail CTR via Open Cloud Analytics API
+                    )
+                except Exception as exc:
+                    log.error(
+                        "performance_monitor.game_failed",
+                        game=game["game_title"],
+                        error=str(exc),
+                    )
         log.info("performance_monitor.cycle_complete", games=len(games))
 
     async def _live_games(self) -> list[dict]:
