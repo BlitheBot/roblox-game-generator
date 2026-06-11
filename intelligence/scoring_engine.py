@@ -17,6 +17,7 @@ from .meta_scout import Signal, MetaScoutResult
 from .trend_predictor import PreArrivalTrend, TrendPredictorResult
 from .mechanic_mapper import MappedSignal
 from .gap_analyzer import GapAnalysisResult
+from .seasonal_context import SEASONAL_BOOST, get_seasonal_context
 
 log = structlog.get_logger()
 
@@ -71,6 +72,8 @@ class ScoringEngine:
         For each gap result, find best matching meta/trend signal and
         compute weighted opportunity score.
         """
+        season = get_seasonal_context()
+
         # Index meta signals and trend signals by mechanic_tag
         meta_by_tag: dict[str, list[Signal]] = {}
         for s in meta_result.signals:
@@ -113,7 +116,18 @@ class ScoringEngine:
             )
 
             # Apply per-mechanic weight multiplier (FeedbackLoop adjustments)
-            opportunity_score = min(1.0, raw_score * tag_weight)
+            opportunity_score = raw_score * tag_weight
+
+            # Seasonal boost (15%) for concepts matching the active season
+            if season.matches_concept(tag, gap.raw_genre, gap.closest_existing_game):
+                opportunity_score *= SEASONAL_BOOST
+                log.debug(
+                    "scoring_engine.seasonal_boost",
+                    mechanic=tag,
+                    season=season.name,
+                )
+
+            opportunity_score = min(1.0, opportunity_score)
 
             scored.append(
                 ScoredConcept(

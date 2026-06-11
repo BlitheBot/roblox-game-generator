@@ -11,6 +11,7 @@ import structlog
 
 from intelligence.llm_client import DEEPSEEK_V3, chat_json
 from intelligence.name_blacklist import check_similarity, get_blacklist
+from intelligence.seasonal_context import get_seasonal_context
 
 log = structlog.get_logger()
 
@@ -58,6 +59,13 @@ class ConceptGenerator:
         seed = json.loads(row["concept_json"]) if isinstance(row["concept_json"], str) else dict(row["concept_json"])
         mechanic_tag = row["mechanic_tag"]
 
+        season = get_seasonal_context()
+        season_note = (
+            f"Seasonal context: {season.theming_hint}\n"
+            if season.is_seasonal
+            else ""
+        )
+
         messages = [
             {
                 "role": "system",
@@ -69,7 +77,8 @@ class ConceptGenerator:
                     "toolbox_keywords should be 5-8 short search phrases for free Roblox "
                     "Toolbox models matching the theme. "
                     "Avoid any weapons-realism, gore, or adult themes (TOS-safe). "
-                    f"Return JSON exactly matching this schema:\n{CONCEPT_SCHEMA_HINT}"
+                    + season_note
+                    + f"Return JSON exactly matching this schema:\n{CONCEPT_SCHEMA_HINT}"
                 ),
             },
             {
