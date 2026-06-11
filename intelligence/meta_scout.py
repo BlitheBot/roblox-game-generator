@@ -48,7 +48,7 @@ class MetaScout:
     async def run(self) -> MetaScoutResult:
         raw_data = await asyncio.gather(
             self._fetch_roblox_top_games(),
-            self._fetch_reddit_hot(),
+            asyncio.to_thread(self._fetch_reddit_hot),  # PRAW is sync
             self._fetch_devforum_trending(),
             self._fetch_youtube_recent(),
             return_exceptions=True,

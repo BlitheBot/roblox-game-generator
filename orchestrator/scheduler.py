@@ -185,17 +185,32 @@ class Orchestrator:
             await self._dispatch_to_build(concept)
 
     async def _dispatch_to_build(self, concept) -> None:
-        """
-        Hand off a passing concept to the Build Pipeline (L2).
-        Phase 2 will wire in ConceptGenerator → LuauAgent → ... here.
-        """
+        """Hand off a passing concept to the Build Pipeline (L2)."""
         log.info(
             "cycle.build_dispatched",
             concept_id=concept.concept_id,
             mechanic=concept.mechanic_tag,
             score=concept.opportunity_score,
         )
-        # TODO: wire build pipeline here in Phase 2
+        from build.pipeline import BuildPipeline
+
+        assert self._pool
+        pipeline = BuildPipeline(self._pool)
+        output = await pipeline.run(concept.concept_id)
+        if output is None:
+            await self._discord_alert(
+                f"Build failed for concept {concept.concept_id} "
+                f"({concept.mechanic_tag}) after all retries — see build_failures table."
+            )
+            return
+        log.info(
+            "cycle.build_complete",
+            game_id=output.game_id,
+            title=output.concept.get("game_title"),
+            rbxl=str(output.rbxl_path),
+        )
+        # TODO: hand off to OpenCloudPublisher in Phase 3 (supervised-mode
+        # Discord approval gate goes between here and publish, spec Section 12)
 
     # ─────────────────────────────────────────────────────────
     # Monitor cycle
