@@ -41,11 +41,12 @@ async def _record_spend(model: str, usage: dict) -> None:
     except Exception as exc:
         log.warning("llm.spend_record_failed", error=str(exc))
 
-# Canonical model IDs on OpenRouter
-GEMINI_FLASH   = "google/gemini-flash-1.5"
-DEEPSEEK_V3    = "deepseek/deepseek-chat"
-CLAUDE_SONNET  = "anthropic/claude-sonnet-4-6"
-CLAUDE_FABLE   = "anthropic/claude-fable-5"
+# Model IDs on OpenRouter (spec Section 8 defaults, env-overridable so a
+# provider deprecation never requires a code change)
+GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-flash-1.5")
+DEEPSEEK_V3    = os.environ.get("LLM_MODEL_REASONING", "deepseek/deepseek-chat")
+CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4-6")
+CLAUDE_FABLE   = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-fable-5")
 
 
 def _headers() -> dict[str, str]:

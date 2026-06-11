@@ -2,8 +2,10 @@
 AssetGenerator (spec 4.5) — generates the game thumbnail (1920x1080),
 icon (512x512), and SEO-optimized description.
 
-Images: FLUX via OpenRouter (chat completions with image modality —
-the image comes back as a base64 data URL on the message).
+Images: image-output model via OpenRouter chat completions (the image
+comes back as a base64 data URL on the message). The spec named FLUX,
+but black-forest-labs/flux-1.1-pro was delisted from OpenRouter —
+default is now gemini-2.5-flash-image, overridable via IMAGE_MODEL.
 Description: DeepSeek V3, max 1000 chars.
 """
 import base64
@@ -20,7 +22,7 @@ from intelligence.llm_client import DEEPSEEK_V3, OPENROUTER_BASE, chat
 
 log = structlog.get_logger()
 
-FLUX_MODEL = "black-forest-labs/flux-1.1-pro"
+IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "google/gemini-2.5-flash-image")
 
 THUMBNAIL_PROMPT = (
     "Roblox game thumbnail, {game_title}, {genre} style, vibrant colors, "
@@ -84,7 +86,7 @@ class AssetGenerator:
             "Content-Type": "application/json",
         }
         body = {
-            "model": FLUX_MODEL,
+            "model": IMAGE_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "modalities": ["image", "text"],
         }
@@ -99,7 +101,7 @@ class AssetGenerator:
         images = message.get("images", [])
         if not images:
             raise RuntimeError(
-                f"FLUX returned no images: {json.dumps(data)[:500]}"
+                f"{IMAGE_MODEL} returned no images: {json.dumps(data)[:500]}"
             )
         data_url = images[0]["image_url"]["url"]
         # data URL format: data:image/png;base64,<payload>
