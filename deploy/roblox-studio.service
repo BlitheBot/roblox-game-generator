@@ -1,0 +1,49 @@
+# Autonomous Roblox Game Studio — orchestrator service (spec Phase 4 step 4)
+#
+# Install (see DEPLOY.md for full setup):
+#   sudo cp deploy/roblox-studio.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now roblox-studio
+
+[Unit]
+Description=Autonomous Roblox Game Studio orchestrator
+Documentation=https://github.com/BlitheBot/roblox-game-generator
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=studio
+Group=studio
+WorkingDirectory=/home/studio/roblox-game-generator
+# .env is loaded by the app itself (python-dotenv); EnvironmentFile keeps
+# systemd-visible overrides possible without code changes
+EnvironmentFile=-/home/studio/roblox-game-generator/.env
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONUTF8=1
+ExecStart=/home/studio/roblox-game-generator/.venv/bin/python -m orchestrator.scheduler
+
+# The orchestrator owns long-running scheduled jobs — give it time to
+# finish an in-flight build before SIGKILL
+TimeoutStopSec=120
+KillSignal=SIGINT
+
+Restart=always
+RestartSec=30
+# Don't flap forever on a persistent crash (bad env, dead DB)
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/builds /home/studio/roblox-game-generator
+
+# Logs land in journald: journalctl -u roblox-studio -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
