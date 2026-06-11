@@ -34,16 +34,25 @@ class PerformanceMonitor:
             return
 
         universe_ids = [g["universe_id"] for g in games]
-        live_stats = await self._fetch_live_stats(universe_ids)
+        live_stats, failed_ids = await self._fetch_live_stats(universe_ids)
+
+        # Defense against mass false-moderation: a universe absent because
+        # its API chunk failed (or the whole endpoint is down) is an outage,
+        # not a takedown — skip it this cycle instead of pausing accounts.
+        if not live_stats and universe_ids:
+            log.warning("performance_monitor.no_stats_returned_skipping_cycle")
+            return
 
         now = datetime.now(timezone.utc)
         async with self._pool.acquire() as conn:
             for game in games:
                 # One bad row must not cost the rest of this hour's metrics
                 try:
+                    if game["universe_id"] in failed_ids:
+                        continue
                     stats = live_stats.get(game["universe_id"])
                     if stats is None:
-                        # Universe missing from the public API response —
+                        # Universe missing from a successful API response —
                         # likely moderated/taken down (spec 16)
                         await self._handle_possible_moderation(game)
                         continue
@@ -84,14 +93,19 @@ class PerformanceMonitor:
             )
         return [dict(row) for row in rows]
 
-    async def _fetch_live_stats(self, universe_ids: list[int]) -> dict[int, dict]:
-        """Public games API gives live `playing` (CCU) per universe."""
+    async def _fetch_live_stats(
+        self, universe_ids: list[int]
+    ) -> tuple[dict[int, dict], set[int]]:
+        """Public games API gives live `playing` (CCU) per universe.
+        Returns (stats, failed_ids) — ids whose request chunk errored go in
+        failed_ids so callers can tell an outage apart from a takedown."""
         stats: dict[int, dict] = {}
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                # API accepts up to 100 ids per call
-                for i in range(0, len(universe_ids), 100):
-                    chunk = universe_ids[i : i + 100]
+        failed_ids: set[int] = set()
+        async with httpx.AsyncClient(timeout=30) as client:
+            # API accepts up to 100 ids per call
+            for i in range(0, len(universe_ids), 100):
+                chunk = universe_ids[i : i + 100]
+                try:
                     resp = await client.get(
                         GAMES_API,
                         params={"universeIds": ",".join(str(u) for u in chunk)},
@@ -104,9 +118,12 @@ class PerformanceMonitor:
                             "visits": item.get("visits", 0),
                             "favorites": item.get("favoritedCount", 0),
                         }
-        except Exception as exc:
-            log.warning("performance_monitor.stats_fetch_failed", error=str(exc))
-        return stats
+                except Exception as exc:
+                    failed_ids.update(chunk)
+                    log.warning(
+                        "performance_monitor.stats_chunk_failed", error=str(exc)
+                    )
+        return stats, failed_ids
 
     async def _handle_possible_moderation(self, game: dict) -> None:
         """Spec 16: pause the genre account, alert, log the incident."""
