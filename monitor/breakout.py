@@ -131,7 +131,7 @@ class UpdateCadence:
         async with pool.acquire() as conn:
             games = await conn.fetch(
                 """
-                SELECT id, game_title, status, genre_account
+                SELECT id, game_title, status, genre_account, place_id
                 FROM published_games
                 WHERE status IN ('live', 'breakout', 'flagged')
                 """

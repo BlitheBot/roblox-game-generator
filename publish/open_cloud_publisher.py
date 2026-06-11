@@ -39,7 +39,6 @@ class GenreAccount:
     genre: str
     api_key: str
     universe_id: int
-    place_id: int
 
 
 @dataclass
@@ -53,19 +52,30 @@ class PublishResult:
 
 
 def load_genre_account(genre: str) -> GenreAccount:
-    """Reads ROBLOX_API_KEY_{GENRE} / UNIVERSE_ID / PLACE_ID from env."""
+    """Reads ROBLOX_API_KEY_{GENRE} / UNIVERSE_ID from env."""
     suffix = genre.upper()
     try:
         return GenreAccount(
             genre=genre,
             api_key=os.environ[f"ROBLOX_API_KEY_{suffix}"],
             universe_id=int(os.environ[f"ROBLOX_UNIVERSE_ID_{suffix}"]),
-            place_id=int(os.environ[f"ROBLOX_PLACE_ID_{suffix}"]),
         )
     except KeyError as exc:
         raise RuntimeError(
             f"genre account '{genre}' not configured — missing env var {exc}"
         ) from exc
+
+
+def genre_place_pool(genre: str) -> list[int]:
+    """Spec 13: up to 5 places per genre account. ROBLOX_PLACE_IDS_{GENRE}
+    is a comma-separated pool; ROBLOX_PLACE_ID_{GENRE} (single) still
+    works as a pool of one."""
+    suffix = genre.upper()
+    multi = os.environ.get(f"ROBLOX_PLACE_IDS_{suffix}", "").strip()
+    if multi:
+        return [int(p.strip()) for p in multi.split(",") if p.strip()]
+    single = os.environ.get(f"ROBLOX_PLACE_ID_{suffix}", "").strip()
+    return [int(single)] if single else []
 
 
 async def upload_thumbnail(genre: str, thumbnail_path: pathlib.Path) -> None:
@@ -122,6 +132,19 @@ class OpenCloudPublisher:
                 error=f"genre '{genre}' published within last {PUBLISH_COOLDOWN_HOURS}h",
             )
 
+        # Spec 13: each game gets its own place — never overwrite a live one
+        place_id = await self._select_free_place(genre)
+        if place_id is None:
+            return PublishResult(
+                success=False,
+                error=(
+                    f"no free place on genre account '{genre}' — every id in "
+                    f"the pool already hosts a game. Create a new place (or "
+                    f"account, spec 13) and add it to ROBLOX_PLACE_IDS_"
+                    f"{genre.upper()}."
+                ),
+            )
+
         account = load_genre_account(genre)
         headers = {"x-api-key": account.api_key}
 
@@ -129,7 +152,7 @@ class OpenCloudPublisher:
             # Step 1: upload place version
             resp = await client.post(
                 f"{APIS_BASE}/universes/v1/{account.universe_id}"
-                f"/places/{account.place_id}/versions",
+                f"/places/{place_id}/versions",
                 params={"versionType": "Published"},
                 headers={**headers, "Content-Type": "application/octet-stream"},
                 content=rbxl_path.read_bytes(),
@@ -196,7 +219,7 @@ class OpenCloudPublisher:
                 uuid.UUID(game_id),
                 uuid.UUID(concept_id),
                 account.universe_id,
-                account.place_id,
+                place_id,
                 genre,
                 datetime.now(timezone.utc),
                 game_title,
@@ -227,12 +250,28 @@ class OpenCloudPublisher:
             success=True,
             game_id=game_id,
             universe_id=account.universe_id,
-            place_id=account.place_id,
+            place_id=place_id,
         )
 
-    async def publish_update(self, genre: str, rbxl_path: pathlib.Path) -> bool:
+    async def _select_free_place(self, genre: str) -> int | None:
+        """First pool place id with no published game on it, else None."""
+        pool = genre_place_pool(genre)
+        async with self._pool.acquire() as conn:
+            used = await conn.fetch(
+                "SELECT DISTINCT place_id FROM published_games WHERE genre_account = $1",
+                genre,
+            )
+        occupied = {row["place_id"] for row in used}
+        for place_id in pool:
+            if place_id not in occupied:
+                return place_id
+        return None
+
+    async def publish_update(
+        self, genre: str, place_id: int, rbxl_path: pathlib.Path
+    ) -> bool:
         """Spec 14: push a new place version to an already-live game.
-        No new published_games row — the game keeps its identity."""
+        Targets the game's own place — no new published_games row."""
         if dry_run_enabled():
             log.info("publisher.dry_run_update_skipped", genre=genre)
             return False
@@ -240,7 +279,7 @@ class OpenCloudPublisher:
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
                 f"{APIS_BASE}/universes/v1/{account.universe_id}"
-                f"/places/{account.place_id}/versions",
+                f"/places/{place_id}/versions",
                 params={"versionType": "Published"},
                 headers={
                     "x-api-key": account.api_key,

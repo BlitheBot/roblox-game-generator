@@ -463,7 +463,9 @@ class Orchestrator:
                 failures=validation.failures[:5],
             )
             return
-        await self._publisher.publish_update(game["genre_account"], rojo_result.rbxl_path)
+        await self._publisher.publish_update(
+            game["genre_account"], game["place_id"], rojo_result.rbxl_path
+        )
 
     # ─────────────────────────────────────────────────────────
     # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
