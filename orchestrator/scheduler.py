@@ -25,7 +25,10 @@ from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
 from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor
+from publish.approval_gate import ApprovalGate
+from publish.discord_bot import ApprovalBot, create_bot
 from publish.marketer import InRobloxMarketer
+from publish.open_cloud_publisher import OpenCloudPublisher
 
 log = structlog.get_logger()
 
@@ -55,6 +58,10 @@ class Orchestrator:
         self._perf_monitor:  PerformanceMonitor | None = None
         self._breakout:      BreakoutDetector | None = None
         self._marketer:      InRobloxMarketer | None = None
+        self._publisher:     OpenCloudPublisher | None = None
+        self._approval_gate: ApprovalGate | None = None
+        self._bot:           ApprovalBot | None = None
+        self._bot_task:      asyncio.Task | None = None
 
     async def start(self) -> None:
         """Initialize DB, wire modules, schedule jobs, start scheduler."""
@@ -73,6 +80,14 @@ class Orchestrator:
         self._perf_monitor   = PerformanceMonitor(self._pool, self._reporter)
         self._breakout       = BreakoutDetector(self._pool, self._reporter)
         self._marketer       = InRobloxMarketer(self._pool)
+        self._publisher      = OpenCloudPublisher(self._pool)
+        self._bot            = create_bot(self._pool)
+        self._approval_gate  = ApprovalGate(self._pool, self._reporter, self._bot)
+
+        # Discord bot runs alongside the scheduler (DM approvals, spec 12)
+        token = os.environ.get("DISCORD_BOT_TOKEN", "")
+        if self._bot is not None and token:
+            self._bot_task = asyncio.create_task(self._bot.start(token))
 
         # Intelligence cycle — every 6 hours
         self._scheduler.add_job(
@@ -105,6 +120,18 @@ class Orchestrator:
             replace_existing=True,
         )
 
+        # Approval queue processor — publishes approved builds, finalizes
+        # skips, retries rate-limited publishes (spec Section 12)
+        self._scheduler.add_job(
+            self._run_approval_processing,
+            trigger=IntervalTrigger(minutes=5),
+            id="approval_processing",
+            name="Approval Queue Processor",
+            replace_existing=True,
+            misfire_grace_time=60,
+            coalesce=True,
+        )
+
         self._scheduler.start()
         log.info("orchestrator.started", cycle_hours=CYCLE_INTERVAL_HOURS)
 
@@ -113,6 +140,10 @@ class Orchestrator:
 
     async def stop(self) -> None:
         self._scheduler.shutdown(wait=False)
+        if self._bot is not None and not self._bot.is_closed():
+            await self._bot.close()
+        if self._bot_task is not None:
+            self._bot_task.cancel()
         await close_pool()
         log.info("orchestrator.stopped")
 
@@ -224,8 +255,26 @@ class Orchestrator:
             title=output.concept.get("game_title"),
             rbxl=str(output.rbxl_path),
         )
-        # TODO: hand off to OpenCloudPublisher in Phase 3 (supervised-mode
-        # Discord approval gate goes between here and publish, spec Section 12)
+
+        # Hand off to the approval gate (spec Section 12): supervised mode
+        # pauses for a Discord DM decision; autonomous mode pre-approves.
+        assert self._approval_gate
+        async with self._pool.acquire() as conn:
+            genre = await conn.fetchval(
+                "SELECT genre FROM concept_queue WHERE id = $1",
+                uuid.UUID(concept.concept_id),
+            )
+        await self._approval_gate.submit(output, genre or "idle")
+        # Process immediately so autonomous publishes don't wait for the
+        # 5-minute job; pending (supervised) rows are untouched.
+        await self._run_approval_processing()
+
+    async def _run_approval_processing(self) -> None:
+        assert self._approval_gate and self._publisher and self._marketer
+        try:
+            await self._approval_gate.process_decisions(self._publisher, self._marketer)
+        except Exception:
+            log.error("cycle.approval_processing_failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # Monitor cycle
