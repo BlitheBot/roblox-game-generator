@@ -1,0 +1,4 @@
+# Files consumed on Linux must keep LF regardless of Windows checkout
+*.service text eol=lf
+*.sh text eol=lf
+*.sql text eol=lf
