@@ -6,15 +6,13 @@ for mutation before proceeding.
 import asyncio
 from dataclasses import dataclass, field
 
-import httpx
 import structlog
 
 from .llm_client import DEEPSEEK_V3, chat_json
 from .mechanic_mapper import MappedSignal
+from .roblox_games import fetch_top_games
 
 log = structlog.get_logger()
-
-ROBLOX_GAMES_LIST = "https://www.roblox.com/games/list-json"
 
 
 @dataclass
@@ -34,8 +32,11 @@ class GapAnalysisResult:
 class GapAnalyzer:
     """Checks proposed concepts against current Roblox top-50 for differentiation."""
 
+    CACHE_TTL_SECONDS = 6 * 3600  # one intelligence-cycle interval
+
     def __init__(self) -> None:
         self._top_games_cache: list[dict] = []
+        self._cache_fetched_at: float = 0.0
 
     async def analyze(self, mapped_signals: list[MappedSignal]) -> list[GapAnalysisResult]:
         top_games = await self._fetch_top_games()
@@ -54,36 +55,19 @@ class GapAnalyzer:
         return valid
 
     async def _fetch_top_games(self) -> list[dict]:
-        if self._top_games_cache:
-            return self._top_games_cache
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    ROBLOX_GAMES_LIST,
-                    params={
-                        "sortToken": "",
-                        "gameFilter": "0",
-                        "timeFilter": "0",
-                        "genreFilter": "0",
-                        "startRows": "0",
-                        "maxRows": "50",
-                    },
-                    headers={"User-Agent": "RobloxStudioBot/1.0"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                games = data.get("Games", [])
-                self._top_games_cache = [
-                    {
-                        "name": g.get("Name", ""),
-                        "playing": g.get("Playing", 0),
-                        "description": g.get("GameDescription", ""),
-                    }
-                    for g in games[:50]
-                ]
-        except Exception as exc:
-            log.warning("gap_analyzer.fetch_games_failed", error=str(exc))
-            self._top_games_cache = []
+        import time
+
+        # The analyzer instance lives as long as the orchestrator — expire
+        # the cache so differentiation isn't scored against a stale top-50
+        if not self._top_games_cache or (
+            time.monotonic() - self._cache_fetched_at > self.CACHE_TTL_SECONDS
+        ):
+            # fetch_top_games returns [] on failure — degrade gracefully
+            self._top_games_cache = [
+                {"name": g["name"], "playing": g["playing"], "up_votes": g["up_votes"]}
+                for g in await fetch_top_games(50)
+            ]
+            self._cache_fetched_at = time.monotonic()
         return self._top_games_cache
 
     async def _analyze_one(

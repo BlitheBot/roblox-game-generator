@@ -12,10 +12,10 @@ import structlog
 from bs4 import BeautifulSoup
 
 from .llm_client import GEMINI_FLASH, chat_json
+from .roblox_games import fetch_top_games
 
 log = structlog.get_logger()
 
-ROBLOX_GAMES_API = "https://games.roblox.com/v1/games"
 DEVFORUM_URL     = "https://devforum.roblox.com/latest.json"
 YOUTUBE_SEARCH   = "https://www.googleapis.com/youtube/v3/search"
 
@@ -67,33 +67,11 @@ class MetaScout:
         return MetaScoutResult(signals=signals)
 
     async def _fetch_roblox_top_games(self) -> list[dict]:
-        """Top 50 games by CCU from Roblox Games API."""
-        params = {
-            "sortToken": "",
-            "gameFilter": "0",
-            "timeFilter": "0",
-            "genreFilter": "0",
-            "startRows": "0",
-            "maxRows": "50",
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.get(
-                "https://www.roblox.com/games/list-json",
-                params=params,
-                headers={"User-Agent": "RobloxStudioBot/1.0"},
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            games = data.get("Games", [])
-            return [
-                {
-                    "name": g.get("Name"),
-                    "playing": g.get("Playing"),
-                    "visits": g.get("TotalUpVotes"),
-                    "genre": g.get("GameDescription", ""),
-                }
-                for g in games[:50]
-            ]
+        """Top 50 games by live CCU via the explore API."""
+        games = await fetch_top_games(50)
+        if not games:
+            raise RuntimeError("explore API returned no games")
+        return games
 
     def _fetch_reddit_hot(self) -> list[dict]:
         """Sync PRAW call wrapped for asyncio — returns hot r/roblox posts."""
