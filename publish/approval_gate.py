@@ -23,7 +23,7 @@ import structlog
 from monitor.discord_reporter import DiscordReporter
 
 from .marketer import InRobloxMarketer
-from .open_cloud_publisher import OpenCloudPublisher
+from .open_cloud_publisher import OpenCloudPublisher, dry_run_enabled
 
 if TYPE_CHECKING:
     from build.pipeline import BuildOutput
@@ -159,6 +159,19 @@ class ApprovalGate:
     async def _publish_approved(
         self, row, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
     ) -> None:
+        if dry_run_enabled():
+            await self._mark_processed(row["game_id"])
+            await self._reporter.alert(
+                f"DRY RUN — built **{row['game_title']}** [{row['genre']}] "
+                f"(rbxl: {row['rbxl_path']}). Publish skipped."
+            )
+            log.info(
+                "approval_gate.dry_run_publish_skipped",
+                game_id=str(row["game_id"]),
+                title=row["game_title"],
+            )
+            return
+
         result = await publisher.publish(
             concept_id=str(row["concept_id"]),
             rbxl_path=pathlib.Path(row["rbxl_path"]),

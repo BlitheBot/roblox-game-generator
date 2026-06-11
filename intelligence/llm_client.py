@@ -10,7 +10,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 log = structlog.get_logger()
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
+# Overridable for integration testing against scripts/mock_openrouter.py
+OPENROUTER_BASE = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
 # Optional spend logging — when the orchestrator registers a pool, every
 # chat call records its cost to llm_spend (feeds the $15/7d alert, spec 6.4)

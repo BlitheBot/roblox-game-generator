@@ -63,8 +63,9 @@ class Orchestrator:
         self._bot:           ApprovalBot | None = None
         self._bot_task:      asyncio.Task | None = None
 
-    async def start(self) -> None:
-        """Initialize DB, wire modules, schedule jobs, start scheduler."""
+    async def init(self) -> None:
+        """Initialize DB pool and wire all phase modules (no scheduling).
+        Used by start() and by scripts/dry_run.py for one-shot runs."""
         self._pool = await get_pool()
         await run_migrations()
         set_spend_pool(self._pool)
@@ -88,6 +89,10 @@ class Orchestrator:
         token = os.environ.get("DISCORD_BOT_TOKEN", "")
         if self._bot is not None and token:
             self._bot_task = asyncio.create_task(self._bot.start(token))
+
+    async def start(self) -> None:
+        """Initialize, schedule all jobs, start the scheduler loop."""
+        await self.init()
 
         # Intelligence cycle — every 6 hours
         self._scheduler.add_job(
@@ -160,13 +165,21 @@ class Orchestrator:
         await self._run_intelligence_cycle()
 
     async def stop(self) -> None:
-        self._scheduler.shutdown(wait=False)
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=False)
         if self._bot is not None and not self._bot.is_closed():
             await self._bot.close()
         if self._bot_task is not None:
             self._bot_task.cancel()
         await close_pool()
         log.info("orchestrator.stopped")
+
+    async def run_one_cycle(self) -> None:
+        """Single end-to-end pass: intelligence → build → approval/publish
+        → monitor. Used by scripts/dry_run.py; call init() first."""
+        await self._run_intelligence_cycle()
+        await self._run_approval_processing()
+        await self._run_monitor_cycle()
 
     # ─────────────────────────────────────────────────────────
     # Intelligence cycle

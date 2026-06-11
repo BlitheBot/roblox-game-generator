@@ -19,7 +19,7 @@ import structlog
 from build.asset_generator import AssetGenerator
 from intelligence.llm_client import DEEPSEEK_V3, chat
 
-from .open_cloud_publisher import APIS_BASE, load_genre_account
+from .open_cloud_publisher import APIS_BASE, dry_run_enabled, load_genre_account
 
 log = structlog.get_logger()
 
@@ -209,6 +209,9 @@ class InRobloxMarketer:
     async def _push_description(
         self, genre: str, universe_id: int, description: str
     ) -> None:
+        if dry_run_enabled():
+            log.info("marketer.dry_run_description_skipped", genre=genre)
+            return
         account = load_genre_account(genre)
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.patch(

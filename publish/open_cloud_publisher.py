@@ -28,6 +28,12 @@ APIS_BASE = "https://apis.roblox.com"
 PUBLISH_COOLDOWN_HOURS = 4
 
 
+def dry_run_enabled() -> bool:
+    """Spec Phase 4 step 2: DRY_RUN=true builds everything but never
+    touches live Roblox universes."""
+    return os.environ.get("DRY_RUN", "").strip().lower() in ("true", "1", "yes")
+
+
 @dataclass
 class GenreAccount:
     genre: str
@@ -65,6 +71,9 @@ def load_genre_account(genre: str) -> GenreAccount:
 async def upload_thumbnail(genre: str, thumbnail_path: pathlib.Path) -> None:
     """Standalone thumbnail upload — used by breakout regen (spec 6.2) and
     low-CTR refresh (spec 5.2) outside the full publish flow."""
+    if dry_run_enabled():
+        log.info("publisher.dry_run_thumbnail_skipped", genre=genre)
+        return
     account = load_genre_account(genre)
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
@@ -89,6 +98,12 @@ class OpenCloudPublisher:
         description: str,
         genre: str,
     ) -> PublishResult:
+        # Defense in depth — ApprovalGate already short-circuits dry runs
+        if dry_run_enabled():
+            return PublishResult(
+                success=False, error="DRY_RUN is enabled — publish blocked"
+            )
+
         # Account paused/banned check (spec 16/19)
         async with self._pool.acquire() as conn:
             account_status = await conn.fetchval(
@@ -218,6 +233,9 @@ class OpenCloudPublisher:
     async def publish_update(self, genre: str, rbxl_path: pathlib.Path) -> bool:
         """Spec 14: push a new place version to an already-live game.
         No new published_games row — the game keeps its identity."""
+        if dry_run_enabled():
+            log.info("publisher.dry_run_update_skipped", genre=genre)
+            return False
         account = load_genre_account(genre)
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
