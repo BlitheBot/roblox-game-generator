@@ -1,20 +1,29 @@
 """
-TrendPredictor — scrapes TikTok (via RapidAPI), YouTube Shorts velocity,
-and Twitter/X gaming discourse to identify pre-arrival cultural trends.
+TrendPredictor — TikTok trending (RapidAPI), YouTube Shorts view velocity
+(Data API, exact 72h window per spec 3.2), and Twitter/X gaming discourse
+(RapidAPI) to identify pre-arrival cultural trends.
 Uses Gemini Flash to estimate time-to-Roblox for each signal.
 """
 import os
 import asyncio
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 
 import httpx
 import structlog
 
+from . import youtube
 from .llm_client import GEMINI_FLASH, chat_json
 
 log = structlog.get_logger()
 
 RAPIDAPI_HOST_TIKTOK = "tiktok-api23.p.rapidapi.com"
+# RapidAPI X/Twitter provider — env-overridable since RapidAPI providers
+# churn; any provider exposing a search endpoint with a compatible
+# response shape works (see _fetch_twitter_gaming parsing)
+RAPIDAPI_HOST_TWITTER = os.environ.get(
+    "RAPIDAPI_HOST_TWITTER", "twitter-api45.p.rapidapi.com"
+)
 YOUTUBE_SHORTS_URL   = "https://www.youtube.com/results"
 
 
@@ -85,15 +94,47 @@ class TrendPredictor:
 
     async def _fetch_youtube_shorts_velocity(self) -> list[dict]:
         """
-        Scrapes YouTube Shorts search for gaming content uploaded in last 72h.
-        Velocity = views / hours_since_upload (approximated from rank).
-        # TODO: Replace with YouTube Data API v3 if YOUTUBE_API_KEY is set
+        Gaming-category videos uploaded in the last 72 hours (spec 3.2),
+        with velocity = views / hours_since_upload from the Data API.
+        Without YOUTUBE_API_KEY (or on API failure), falls back to scraping
+        with the closest native filters and rank as a velocity proxy.
         """
+        if youtube.api_key():
+            try:
+                videos = await youtube.search_recent(
+                    "gaming shorts",
+                    hours=72,
+                    max_results=20,
+                    category_id="20",  # YouTube category 20 = Gaming
+                    order="viewCount",
+                )
+                stats = await youtube.video_stats([v["video_id"] for v in videos])
+                now = datetime.now(timezone.utc)
+                results = []
+                for v in videos:
+                    published = datetime.fromisoformat(
+                        v["published_at"].replace("Z", "+00:00")
+                    )
+                    hours_live = max(1.0, (now - published).total_seconds() / 3600)
+                    views = stats.get(v["video_id"], 0)
+                    results.append(
+                        {
+                            "title": v["title"],
+                            "views": views,
+                            "hours_since_upload": round(hours_live, 1),
+                            "views_per_hour": round(views / hours_live, 1),
+                        }
+                    )
+                return results
+            except Exception as exc:
+                log.warning("trend_predictor.youtube_api_failed", error=str(exc))
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.get(
                     YOUTUBE_SHORTS_URL,
-                    params={"search_query": "gaming trending 2025 shorts", "sp": "EgIYAw%3D%3D"},
+                    # 'this week' upload + short duration filters — no 72h
+                    # option exists on youtube.com; exact 72h needs the API
+                    params={"search_query": "gaming trending 2025 shorts", "sp": "EgQIAxgD"},
                     headers={"User-Agent": "Mozilla/5.0 (compatible; RobloxStudioBot/1.0)"},
                     follow_redirects=True,
                 )
@@ -112,33 +153,43 @@ class TrendPredictor:
 
     async def _fetch_twitter_gaming(self) -> list[dict]:
         """
-        Scrapes Twitter/X trending gaming discourse.
-        Uses nitter.net public mirror for unauthenticated access.
-        # TODO: Plug in Twitter API Bearer token if available via TWITTER_BEARER_TOKEN
+        Twitter/X gaming discourse via RapidAPI (the public Nitter mirrors
+        this previously scraped are dead). Reuses RAPIDAPI_KEY; the provider
+        host is overridable via RAPIDAPI_HOST_TWITTER. Parsing is defensive
+        across the common response shapes RapidAPI X providers return.
         """
-        try:
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.get(
-                    "https://nitter.privacydev.net/search",
-                    params={
-                        "q": "roblox gaming trend",
-                        "f": "tweets",
-                        "since": "",
-                    },
-                    headers={"User-Agent": "Mozilla/5.0 (compatible; RobloxStudioBot/1.0)"},
-                    follow_redirects=True,
-                )
-                from bs4 import BeautifulSoup
-                soup = BeautifulSoup(resp.text, "lxml")
-                tweets = []
-                for tweet in soup.select(".tweet-content")[:20]:
-                    text = tweet.get_text(strip=True)
-                    if text:
-                        tweets.append({"text": text})
-                return tweets
-        except Exception as exc:
-            log.warning("trend_predictor.twitter_failed", error=str(exc))
+        if not self._rapidapi_key:
+            log.warning("trend_predictor.no_rapidapi_key_twitter")
             return []
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(
+                f"https://{RAPIDAPI_HOST_TWITTER}/search.php",
+                headers={
+                    "X-RapidAPI-Key": self._rapidapi_key,
+                    "X-RapidAPI-Host": RAPIDAPI_HOST_TWITTER,
+                },
+                params={"query": "roblox gaming trend", "search_type": "Latest"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        items = data.get("timeline") or data.get("results") or data.get("data") or []
+        if isinstance(items, dict):
+            items = items.get("tweets") or items.get("list") or []
+        tweets = []
+        for item in items[:20]:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text") or item.get("full_text") or item.get("tweet") or ""
+            if text:
+                tweets.append(
+                    {
+                        "text": str(text)[:500],
+                        "likes": item.get("favorites") or item.get("favorite_count") or 0,
+                        "retweets": item.get("retweets") or item.get("retweet_count") or 0,
+                    }
+                )
+        return tweets
 
     async def _analyze_with_llm(self, raw_items: list[dict]) -> list[PreArrivalTrend]:
         """Use Gemini Flash to classify each raw signal into a pre-arrival trend."""

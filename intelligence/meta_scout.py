@@ -11,13 +11,13 @@ import praw
 import structlog
 from bs4 import BeautifulSoup
 
+from . import youtube
 from .llm_client import GEMINI_FLASH, chat_json
 from .roblox_games import fetch_top_games
 
 log = structlog.get_logger()
 
 DEVFORUM_URL     = "https://devforum.roblox.com/latest.json"
-YOUTUBE_SEARCH   = "https://www.googleapis.com/youtube/v3/search"
 
 
 @dataclass
@@ -115,16 +115,27 @@ class MetaScout:
 
     async def _fetch_youtube_recent(self) -> list[dict]:
         """
-        Recent YouTube videos tagged 'roblox' in last 72h.
-        Uses simple httpx scrape of search page if no API key set;
-        falls back gracefully.
-        # TODO: integrate YouTube Data API v3 with YOUTUBE_API_KEY if available
+        YouTube videos tagged 'roblox' uploaded in the last 72 hours,
+        sorted by upload date (spec 3.1). The Data API's publishedAfter
+        gives the exact 72h window; without YOUTUBE_API_KEY (or on API
+        failure) we scrape with the closest native filter (this week).
         """
+        if youtube.api_key():
+            try:
+                videos = await youtube.search_recent("roblox", hours=72, max_results=20)
+                return [
+                    {"title": v["title"], "published_at": v["published_at"]}
+                    for v in videos
+                ]
+            except Exception as exc:
+                log.warning("meta_scout.youtube_api_failed", error=str(exc))
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 params = {
                     "search_query": "roblox new game 2025",
-                    "sp": "EgIIAw%3D%3D",  # filter: last hour — approximate
+                    # 'this week' upload filter — youtube.com has no 72h
+                    # option; exact 72h needs YOUTUBE_API_KEY above
+                    "sp": "EgIIAw%3D%3D",
                 }
                 resp = await client.get(
                     "https://www.youtube.com/results",
