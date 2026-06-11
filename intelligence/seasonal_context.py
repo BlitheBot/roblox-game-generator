@@ -124,6 +124,34 @@ def get_seasonal_context(today: date | None = None) -> SeasonalContext:
     return _STANDARD
 
 
+def season_window_end(season_name: str, today: date | None = None) -> date:
+    """The end date of the named season's current/next window."""
+    d = today or datetime.now(timezone.utc).date()
+    for name, start, end in _WINDOWS:
+        if name != season_name:
+            continue
+        year = d.year
+        if (d.month, d.day) > end:
+            year += 1
+        return date(year, end[0], end[1])
+    raise ValueError(f"unknown season '{season_name}'")
+
+
+def upcoming_season(within_days: int, today: date | None = None) -> SeasonalContext | None:
+    """The active season, or one whose window opens within `within_days`;
+    None when nothing is near. Used by LiveOps to pre-stage reskins."""
+    d = today or datetime.now(timezone.utc).date()
+    active = get_seasonal_context(d)
+    if active.is_seasonal:
+        return active
+    best: tuple[int, str] | None = None
+    for name, _, _ in _WINDOWS:
+        days = days_until_season(name, d)
+        if 0 < days <= within_days and (best is None or days < best[0]):
+            best = (days, name)
+    return _BY_NAME[best[1]] if best else None
+
+
 def days_until_season(season_name: str, today: date | None = None) -> int:
     """Days until the named season's window opens next (0 when active).
     Used by LiveOps to pre-stage reskins shortly before a window opens."""
