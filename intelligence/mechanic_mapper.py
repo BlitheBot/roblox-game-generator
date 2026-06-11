@@ -76,7 +76,7 @@ class MechanicMapper:
 
             if mechanic_tag not in VALID_TAGS:
                 mechanic_tag = self._best_guess_from_hint(
-                    items[idx]["hint_mechanic"] if idx < len(items) else ""
+                    items[idx]["hint_mechanic"] if 0 <= idx < len(items) else ""
                 )
 
             source_entry = items[idx] if 0 <= idx < len(items) else {}

@@ -4,7 +4,8 @@ publish preview and listens for decision commands in that DM:
 
     !approve <game_id>   approve a pending publish
     !skip <game_id>      reject a pending publish (build is discarded)
-    !resume <genre>      un-pause a genre account after moderation review
+    !resume <genre>          un-pause a genre account after moderation review
+    !resume-account <genre>  alias used by ban-handling alerts (spec 19)
 
 Requires DISCORD_BOT_TOKEN and DISCORD_OWNER_ID. When unset, the
 ApprovalGate falls back to webhook previews and decisions must be made
@@ -72,6 +73,9 @@ class ApprovalBot(discord.Client):
             await self._decide(message, content.removeprefix("!approve ").strip(), "approved")
         elif content.startswith("!skip "):
             await self._decide(message, content.removeprefix("!skip ").strip(), "skipped")
+        elif content.startswith("!resume-account "):
+            # Spec 19 ban-handling form — same action as !resume (spec 16)
+            await self._resume(message, content.removeprefix("!resume-account ").strip())
         elif content.startswith("!resume "):
             await self._resume(message, content.removeprefix("!resume ").strip())
 
