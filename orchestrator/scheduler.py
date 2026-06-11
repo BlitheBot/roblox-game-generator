@@ -164,6 +164,18 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Name blacklist refresh — every 24h (get_blacklist() also lazily
+        # refreshes on read, this keeps the file warm between builds)
+        self._scheduler.add_job(
+            self._run_blacklist_refresh,
+            trigger=IntervalTrigger(hours=24),
+            id="name_blacklist_refresh",
+            name="Game Name Blacklist Refresh",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
         # Low-CTR thumbnail refresh — monthly on the 1st (spec 5.2 phase 2)
         self._scheduler.add_job(
             self._run_thumbnail_refresh,
@@ -489,6 +501,18 @@ class Orchestrator:
         await self._publisher.publish_update(
             game["genre_account"], game["place_id"], rojo_result.rbxl_path
         )
+
+    # ─────────────────────────────────────────────────────────
+    # Name blacklist refresh (24h)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_blacklist_refresh(self) -> None:
+        from intelligence.name_blacklist import refresh_blacklist
+
+        try:
+            await refresh_blacklist(force=True)
+        except Exception:
+            log.error("cycle.blacklist_refresh_failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
