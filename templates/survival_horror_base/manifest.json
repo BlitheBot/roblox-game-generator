@@ -1,0 +1,22 @@
+{
+    "template": "survival_horror_base",
+    "mechanic_tag": "survival_horror",
+    "description": "Rounds-based survival: lobby, map voting, monster AI chase, survivor win/lose, cosmetic currency rewards.",
+    "placeholders": {
+        "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{CURRENCY_NAME}}": "Reward currency name (e.g. 'Souls')",
+        "{{MONSTER_NAME}}": "The threat entity name (e.g. 'The Kraken')",
+        "{{ROUND_SECONDS}}": "Round length in seconds (number literal, e.g. 120)",
+        "{{GAME_PASSES_LUA}}": "Lua table literal of game passes",
+        "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items",
+        "{{VIP_SERVER_ENABLED}}": "true|false",
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+    },
+    "files": [
+        "default.project.json",
+        "src/shared/Config.luau",
+        "src/server/Main.server.luau",
+        "src/server/MonsterAI.luau",
+        "src/client/Main.client.luau"
+    ]
+}

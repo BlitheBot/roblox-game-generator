@@ -1,0 +1,21 @@
+{
+    "template": "incremental_sim_base",
+    "mechanic_tag": "incremental_sim",
+    "description": "Resource tick, sell loop, rebirth multiplier, leaderboard.",
+    "placeholders": {
+        "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{CURRENCY_NAME}}": "Soft currency name (e.g. 'Coins')",
+        "{{RESOURCE_NAME}}": "The thing that grows over time (e.g. 'Crystals')",
+        "{{REBIRTH_NAME}}": "Name of the rebirth action (e.g. 'Ascend')",
+        "{{GAME_PASSES_LUA}}": "Lua table literal of game passes",
+        "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items",
+        "{{VIP_SERVER_ENABLED}}": "true|false",
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+    },
+    "files": [
+        "default.project.json",
+        "src/shared/Config.luau",
+        "src/server/Main.server.luau",
+        "src/client/Main.client.luau"
+    ]
+}

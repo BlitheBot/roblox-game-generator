@@ -1,0 +1,25 @@
+{
+    "name": "{{GAME_TITLE}}",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "Shared": { "$path": "src/shared" },
+            "Remotes": {
+                "$className": "Folder",
+                "RequestHatch": { "$className": "RemoteEvent" },
+                "RequestEquip": { "$className": "RemoteEvent" },
+                "RequestTrade": { "$className": "RemoteEvent" },
+                "StateChanged": { "$className": "RemoteEvent" }
+            },
+            "ToolboxAssets": { "$className": "Folder" }
+        },
+        "ServerScriptService": {
+            "Server": { "$path": "src/server" }
+        },
+        "StarterPlayer": {
+            "StarterPlayerScripts": {
+                "Client": { "$path": "src/client" }
+            }
+        }
+    }
+}

@@ -1,0 +1,22 @@
+{
+    "template": "pet_collect_base",
+    "mechanic_tag": "pet_collect",
+    "description": "Egg hatching with rarity tiers, pet inventory, equip slots, trade requests.",
+    "placeholders": {
+        "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{CURRENCY_NAME}}": "Soft currency name",
+        "{{PET_NOUN}}": "What the collectibles are called (e.g. 'Parrots')",
+        "{{EGG_NOUN}}": "What the hatchable container is called (e.g. 'Crates')",
+        "{{PET_NAMES_LUA}}": "Lua table literal: list of pet name pools per rarity",
+        "{{GAME_PASSES_LUA}}": "Lua table literal of game passes",
+        "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items",
+        "{{VIP_SERVER_ENABLED}}": "true|false",
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+    },
+    "files": [
+        "default.project.json",
+        "src/shared/Config.luau",
+        "src/server/Main.server.luau",
+        "src/client/Main.client.luau"
+    ]
+}

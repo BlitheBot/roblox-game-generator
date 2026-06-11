@@ -1,0 +1,35 @@
+{
+    "name": "{{GAME_TITLE}}",
+    "tree": {
+        "$className": "DataModel",
+        "ReplicatedStorage": {
+            "Shared": { "$path": "src/shared" },
+            "Remotes": {
+                "$className": "Folder",
+                "RequestVote": { "$className": "RemoteEvent" },
+                "RoundState": { "$className": "RemoteEvent" }
+            },
+            "ToolboxAssets": { "$className": "Folder" }
+        },
+        "ServerScriptService": {
+            "Server": { "$path": "src/server" }
+        },
+        "StarterPlayer": {
+            "StarterPlayerScripts": {
+                "Client": { "$path": "src/client" }
+            }
+        },
+        "Workspace": {
+            "Lobby": { "$className": "Folder" },
+            "Arena": { "$className": "Folder" }
+        },
+        "Lighting": {
+            "$properties": {
+                "Brightness": 0.5,
+                "ClockTime": 0,
+                "FogEnd": 120,
+                "FogColor": [0.05, 0.05, 0.08]
+            }
+        }
+    }
+}

@@ -1,0 +1,174 @@
+--!strict
+-- Round manager: lobby → map vote → round → results loop.
+-- Votes are validated server-side; currency rewards are server-authoritative.
+
+local DataStoreService = game:GetService("DataStoreService")
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Config = require(ReplicatedStorage.Shared.Config)
+local MonsterAI = require(script.Parent.MonsterAI)
+
+local Remotes = ReplicatedStorage:WaitForChild("Remotes")
+local RequestVote = Remotes:WaitForChild("RequestVote") :: RemoteEvent
+local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
+
+local store = nil
+pcall(function()
+	store = DataStoreService:GetDataStore("PlayerData_v1")
+end)
+
+local currency: { [number]: number } = {}
+local votes: { [number]: string } = {}
+local alive: { [number]: boolean } = {}
+local phase = "lobby"
+
+local function load(player: Player)
+	currency[player.UserId] = 0
+	if store then
+		local ok, saved = pcall(function()
+			return store:GetAsync(tostring(player.UserId))
+		end)
+		if ok and typeof(saved) == "number" then
+			currency[player.UserId] = saved
+		end
+	end
+end
+
+local function save(player: Player)
+	local amount = currency[player.UserId]
+	if amount and store then
+		pcall(function()
+			store:SetAsync(tostring(player.UserId), amount)
+		end)
+	end
+end
+
+local function broadcast(payload: { [string]: any })
+	payload.Phase = phase
+	for _, player in Players:GetPlayers() do
+		payload.Currency = currency[player.UserId] or 0
+		RoundState:FireClient(player, payload)
+	end
+end
+
+local function tallyVotes(): string
+	local counts: { [string]: number } = {}
+	for _, mapName in votes do
+		counts[mapName] = (counts[mapName] or 0) + 1
+	end
+	local winner = Config.Maps[1]
+	local best = -1
+	for mapName, count in counts do
+		if count > best then
+			best = count
+			winner = mapName
+		end
+	end
+	return winner
+end
+
+local function eliminate(player: Player)
+	if not alive[player.UserId] then
+		return
+	end
+	alive[player.UserId] = false
+	local reward = math.floor(Config.SurvivalReward * Config.EliminationPenaltyKeepFraction)
+	currency[player.UserId] = (currency[player.UserId] or 0) + reward
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.Health = 0
+	end
+	broadcast({ Eliminated = player.Name })
+end
+
+local function anySurvivors(): boolean
+	for _, isAlive in alive do
+		if isAlive then
+			return true
+		end
+	end
+	return false
+end
+
+local function runRound()
+	-- Vote phase
+	phase = "voting"
+	votes = {}
+	broadcast({ Maps = Config.Maps, TimeLeft = Config.VoteSeconds })
+	task.wait(Config.VoteSeconds)
+	local chosenMap = tallyVotes()
+
+	-- Round phase
+	phase = "round"
+	alive = {}
+	for _, player in Players:GetPlayers() do
+		if player.Character then
+			alive[player.UserId] = true
+		end
+	end
+	broadcast({ Map = chosenMap, TimeLeft = Config.RoundSeconds, Monster = Config.MonsterName })
+
+	MonsterAI.Start(Vector3.new(0, 10, -60), alive, eliminate)
+
+	local elapsed = 0
+	while elapsed < Config.RoundSeconds and anySurvivors() do
+		task.wait(1)
+		elapsed += 1
+	end
+	MonsterAI.Stop()
+
+	-- Results: survivors get full reward
+	phase = "results"
+	local survivors = {}
+	for userId, isAlive in alive do
+		if isAlive then
+			currency[userId] = (currency[userId] or 0) + Config.SurvivalReward
+			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				table.insert(survivors, player.Name)
+				save(player)
+			end
+		end
+	end
+	broadcast({ Survivors = survivors })
+	task.wait(5)
+end
+
+Players.PlayerAdded:Connect(load)
+Players.PlayerRemoving:Connect(function(player)
+	save(player)
+	currency[player.UserId] = nil
+	votes[player.UserId] = nil
+	alive[player.UserId] = nil
+end)
+
+game:BindToClose(function()
+	for _, player in Players:GetPlayers() do
+		save(player)
+	end
+end)
+
+RequestVote.OnServerEvent:Connect(function(player: Player, mapName: unknown)
+	if phase ~= "voting" or typeof(mapName) ~= "string" then
+		return
+	end
+	if table.find(Config.Maps, mapName) then
+		votes[player.UserId] = mapName :: string
+	end
+end)
+
+-- Main loop
+task.spawn(function()
+	while true do
+		phase = "lobby"
+		broadcast({ TimeLeft = Config.LobbySeconds })
+		task.wait(Config.LobbySeconds)
+		if #Players:GetPlayers() >= Config.MinPlayers then
+			runRound()
+		end
+	end
+end)
+
+print(("[%s] server initialized"):format(Config.GameTitle))
