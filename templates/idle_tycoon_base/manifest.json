@@ -1,0 +1,30 @@
+{
+    "template": "idle_tycoon_base",
+    "mechanic_tag": "idle_tycoon",
+    "description": "Plot claiming, dropper/conveyor production, prestige loop, upgrade UI, game pass + shop monetization.",
+    "placeholders": {
+        "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{CURRENCY_NAME}}": "Primary soft currency name (e.g. 'Doubloons')",
+        "{{PRODUCT_NAME}}": "The item the droppers produce (e.g. 'Cannonball')",
+        "{{THEME_DESCRIPTOR}}": "One-word theme used in UI copy (e.g. 'Pirate')",
+        "{{PRESTIGE_NAME}}": "Name of the prestige action (e.g. 'Set Sail')",
+        "{{GAME_PASSES_LUA}}": "Lua table literal of game passes from monetization config",
+        "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items from monetization config",
+        "{{VIP_SERVER_ENABLED}}": "true|false from monetization config",
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+    },
+    "files": [
+        "default.project.json",
+        "src/shared/Config.luau",
+        "src/shared/Types.luau",
+        "src/server/Main.server.luau",
+        "src/server/DataService.luau",
+        "src/server/PlotService.luau",
+        "src/server/ProductionService.luau",
+        "src/server/PrestigeService.luau",
+        "src/server/ShopService.luau",
+        "src/client/Main.client.luau",
+        "src/client/HUD.luau",
+        "src/client/UpgradeUI.luau"
+    ]
+}
