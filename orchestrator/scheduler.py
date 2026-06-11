@@ -300,13 +300,11 @@ class Orchestrator:
 
         # Hand off to the approval gate (spec Section 12): supervised mode
         # pauses for a Discord DM decision; autonomous mode pre-approves.
+        # Pass the genre ACCOUNT (idle/horror/sim) — the publisher resolves
+        # ROBLOX_API_KEY_{GENRE} from it, not the raw trend genre string.
         assert self._approval_gate
-        async with self._pool.acquire() as conn:
-            genre = await conn.fetchval(
-                "SELECT genre FROM concept_queue WHERE id = $1",
-                uuid.UUID(concept.concept_id),
-            )
-        await self._approval_gate.submit(output, genre or "idle")
+        genre_account = output.concept.get("target_genre_account") or "sim"
+        await self._approval_gate.submit(output, genre_account)
         # Process immediately so autonomous publishes don't wait for the
         # 5-minute job; pending (supervised) rows are untouched.
         await self._run_approval_processing()

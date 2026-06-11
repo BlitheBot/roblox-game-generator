@@ -7,6 +7,7 @@ On failure, stderr is captured and returned so the pipeline can feed it
 back to LuauAgent for a targeted fix (max 3 retries before escalation).
 """
 import asyncio
+import os
 import pathlib
 from dataclasses import dataclass
 
@@ -26,10 +27,13 @@ class RojoBuildResult:
 
 
 class RojoBuilder:
-    """Subprocess wrapper around the rojo CLI with error capture."""
+    """Subprocess wrapper around the rojo CLI with error capture.
 
-    def __init__(self, rojo_binary: str = "rojo") -> None:
-        self._rojo = rojo_binary
+    ROJO_BINARY env overrides the binary path — needed when `rojo` on
+    PATH is a Rokit shim that requires a project manifest."""
+
+    def __init__(self, rojo_binary: str | None = None) -> None:
+        self._rojo = rojo_binary or os.environ.get("ROJO_BINARY", "rojo")
 
     async def build(self, build_dir: pathlib.Path) -> RojoBuildResult:
         project_file = build_dir / "default.project.json"

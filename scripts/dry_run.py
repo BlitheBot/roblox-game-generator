@@ -23,6 +23,12 @@ import dotenv
 
 
 async def amain() -> int:
+    # Windows consoles default to cp1252, which can't print the emoji in
+    # alert/log text — force UTF-8 so logging never crashes the cycle
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
     dotenv.load_dotenv()
     os.environ["DRY_RUN"] = "true"
     # Autonomous gate path so builds flow through without a Discord DM

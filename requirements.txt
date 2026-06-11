@@ -36,7 +36,6 @@ aiofiles==23.2.1
 python-dateutil==2.9.0
 tenacity==8.3.0
 structlog==24.2.0
-uuid==1.30
 
 # HTTP for sync calls (RapidAPI etc.)
 requests==2.32.3
