@@ -6,9 +6,10 @@ local Config = {
 	RebirthName = "{{REBIRTH_NAME}}",
 
 	-- Resource grows every tick; selling converts to currency
+	-- (numeric knobs are LiveOps-tunable via concept.balance)
 	TickSeconds = 1.0,
-	BaseGrowthPerTick = 1,
-	BaseSellValue = 1,
+	BaseGrowthPerTick = {{BASE_GROWTH_PER_TICK}},
+	BaseSellValue = {{BASE_SELL_VALUE}},
 
 	Upgrades = {
 		{ Name = "Faster Growth", BaseCost = 25, CostMultiplier = 1.5, Effect = "growth", EffectValue = 1.3, MaxLevel = 30 },

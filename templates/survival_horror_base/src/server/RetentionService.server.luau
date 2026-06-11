@@ -14,6 +14,8 @@ local ServerStorage = game:GetService("ServerStorage")
 
 local STORE_NAME = "RetentionData_v1"
 local BASE_DAILY_REWARD = 100
+-- LiveOps-tunable boost applied to milestone-streak rewards (concept.balance)
+local RETENTION_REWARD_BOOST = {{RETENTION_REWARD_BOOST}}
 local STREAK_REWARD_CAP = 30 -- reward keeps escalating up to day 30
 
 -- Streak milestone multipliers (applied to both the daily reward and the
@@ -115,7 +117,8 @@ local function onPlayerAdded(player: Player)
 		end
 		record.LastClaimDay = today
 		local multiplier = milestoneMultiplier(record.Streak)
-		reward = math.floor(BASE_DAILY_REWARD * math.min(record.Streak, STREAK_REWARD_CAP) * multiplier)
+		reward = math.floor(BASE_DAILY_REWARD * math.min(record.Streak, STREAK_REWARD_CAP) * multiplier
+			* (if record.Streak >= 3 then RETENTION_REWARD_BOOST else 1))
 		claimedNow = true
 		saveRecord(player, record)
 		grantCurrency(player, reward)

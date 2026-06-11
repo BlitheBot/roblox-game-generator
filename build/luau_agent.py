@@ -19,6 +19,23 @@ log = structlog.get_logger()
 
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
 
+# Placeholders filled by code (numerics, monetization tables, titles) —
+# never offered to the theming LLM and never overridable by its output
+PROGRAMMATIC_PLACEHOLDERS = {
+    "{{GAME_TITLE}}",
+    "{{VIP_SERVER_ENABLED}}",
+    "{{ROUND_SECONDS}}",
+    "{{BASE_DROP_VALUE}}",
+    "{{DROP_INTERVAL_SECONDS}}",
+    "{{STARTING_CURRENCY}}",
+    "{{PET_STARTING_CURRENCY}}",
+    "{{BASE_INCOME_PER_SECOND}}",
+    "{{BASE_GROWTH_PER_TICK}}",
+    "{{BASE_SELL_VALUE}}",
+    "{{SURVIVAL_REWARD}}",
+    "{{RETENTION_REWARD_BOOST}}",
+}
+
 TEMPLATE_FOR_TAG = {
     "idle_tycoon":     "idle_tycoon_base",
     "pet_collect":     "pet_collect_base",
@@ -115,8 +132,7 @@ class LuauAgent:
         """Ask the LLM for themed values for the template's free-text placeholders."""
         free_text_placeholders = [
             p for p in manifest["placeholders"]
-            if not p.endswith("_LUA}}")
-            and p not in ("{{GAME_TITLE}}", "{{VIP_SERVER_ENABLED}}", "{{ROUND_SECONDS}}")
+            if not p.endswith("_LUA}}") and p not in PROGRAMMATIC_PLACEHOLDERS
         ]
         if not free_text_placeholders:
             return {}
@@ -204,6 +220,36 @@ class LuauAgent:
             "{{ROUND_SECONDS}}": "120",
         }
 
+        # LiveOps-tunable balance knobs (concept.balance, improvement 8).
+        # Values are forced through float() so a malformed patch can never
+        # inject non-numeric text into Luau source.
+        balance = concept.get("balance", {}) or {}
+
+        def _num(key: str, default: float) -> str:
+            try:
+                value = float(balance.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            return str(int(value)) if value == int(value) else str(value)
+
+        substitutions.update({
+            "{{BASE_DROP_VALUE}}":        _num("base_drop_value", 1),
+            "{{DROP_INTERVAL_SECONDS}}":  _num("drop_interval_seconds", 2.0),
+            "{{STARTING_CURRENCY}}":      _num("starting_currency", 0),
+            "{{PET_STARTING_CURRENCY}}":  _num("pet_starting_currency", 250),
+            "{{BASE_INCOME_PER_SECOND}}": _num("base_income_per_second", 1),
+            "{{BASE_GROWTH_PER_TICK}}":   _num("base_growth_per_tick", 1),
+            "{{BASE_SELL_VALUE}}":        _num("base_sell_value", 1),
+            "{{SURVIVAL_REWARD}}":        _num("survival_reward", 50),
+            "{{RETENTION_REWARD_BOOST}}": _num("retention_reward_boost", 1),
+        })
+
+        # Survival map list — content drops append variants via concept.maps
+        maps = [str(m) for m in (concept.get("maps") or []) if str(m).strip()]
+        substitutions["{{MAPS_LUA}}"] = _to_lua(
+            maps or ["Crypt", "Shipwreck", "Lighthouse"]
+        )
+
         # Themed pet name pools for pet_collect template
         if "{{PET_NAMES_LUA}}" in manifest["placeholders"]:
             pools = concept.get("pet_name_pools") or {
@@ -215,7 +261,11 @@ class LuauAgent:
             }
             substitutions["{{PET_NAMES_LUA}}"] = _to_lua(pools)
 
-        substitutions.update(theme_values)
+        # Theming values never override programmatic/numeric placeholders
+        substitutions.update({
+            k: v for k, v in theme_values.items()
+            if k not in PROGRAMMATIC_PLACEHOLDERS and not k.endswith("_LUA}}")
+        })
 
         # Any placeholder still unfilled gets a safe default so output parses
         for placeholder in manifest["placeholders"]:

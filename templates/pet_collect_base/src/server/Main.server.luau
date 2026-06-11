@@ -27,7 +27,7 @@ local sessionData: { [number]: any } = {}
 local pendingTrades: { [number]: { target: number, petId: string } } = {}
 
 local function defaultData()
-	return { Currency = 250, Pets = {}, Equipped = {} }
+	return { Currency = Config.StartingCurrency, Pets = {}, Equipped = {} }
 end
 
 local function load(player: Player)

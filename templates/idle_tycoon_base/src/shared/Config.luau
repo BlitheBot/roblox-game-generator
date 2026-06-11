@@ -8,10 +8,10 @@ local Config = {
 	ThemeDescriptor = "{{THEME_DESCRIPTOR}}",
 	PrestigeName = "{{PRESTIGE_NAME}}",
 
-	-- Economy
-	BaseDropValue = 1,
-	DropIntervalSeconds = 2.0,
-	StartingCurrency = 0,
+	-- Economy (numeric knobs are LiveOps-tunable via concept.balance)
+	BaseDropValue = {{BASE_DROP_VALUE}},
+	DropIntervalSeconds = {{DROP_INTERVAL_SECONDS}},
+	StartingCurrency = {{STARTING_CURRENCY}},
 
 	-- Upgrades: each level multiplies drop value and reduces interval
 	Upgrades = {
