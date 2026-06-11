@@ -54,6 +54,127 @@ PATCH_SCHEMA_HINT = """{
 }"""
 
 
+async def tune_monetization(
+    pool: asyncpg.Pool, game: dict, concept: dict
+) -> list[str]:
+    """Monetization balance rules (improvement 9 step 7). Applied changes
+    land in balance_history with metric_trigger 'monetization_*'.
+
+    Data reality: Roblox exposes no per-player purchase analytics via
+    API, so two of the requested rules run on proxies and two are
+    insufficient-data stubs until the Analytics API ships them:
+      * first-session purchase rate → proxied by zero recorded revenue
+        across 7+ days with real traffic → starter pack price drops to 79
+      * limited-item sellout speed → read from the game's
+        MonetizationGlobal_v1 DataStore via Open Cloud → next batch stock
+        shrinks 25% when everything sold out within the first week
+      * season-pass conversion and flash-sale conversion → no data
+        source exists; logged and skipped (push notifications to
+        non-buyers also have no Roblox API)
+    """
+    changes: list[str] = []
+    monetization = concept.setdefault("monetization", {})
+    game_id = game["game_id"]
+
+    # Rule 1: zero revenue despite traffic → starter pack to 79 Robux
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT SUM(revenue_robux) AS revenue, AVG(ccu) AS avg_ccu,
+                   COUNT(*) AS samples
+            FROM game_metrics
+            WHERE game_id = $1 AND timestamp > $2
+            """,
+            uuid.UUID(game_id),
+            cutoff,
+        )
+    casual = monetization.setdefault("casual_tier", {})
+    if (
+        row
+        and (row["samples"] or 0) >= 100
+        and float(row["avg_ccu"] or 0) >= 3
+        and int(row["revenue"] or 0) == 0
+        and casual.get("starter_pack_price", 99) > 79
+    ):
+        casual["starter_pack_price"] = 79
+        change = "starter pack price 99 → 79 Robux (traffic but zero recorded revenue)"
+        changes.append(change)
+        await _log_monetization_change(
+            pool, game_id, "monetization_first_session_conversion", change, casual
+        )
+
+    # Rule 2: limited items all sold out quickly → tighter next batch
+    try:
+        sellout = await _limited_sellout_check(game, monetization)
+    except Exception as exc:
+        log.info("liveops.monetization.stock_check_unavailable", error=str(exc))
+        sellout = False
+    if sellout:
+        whale = monetization.setdefault("whale_tier", {})
+        for item in whale.get("limited_items", []):
+            item["stock"] = max(25, int(int(item.get("stock", 100)) * 0.75))
+        change = "limited items sold out within a week — next batch stock reduced 25%"
+        changes.append(change)
+        await _log_monetization_change(
+            pool, game_id, "monetization_limited_scarcity", change, whale
+        )
+
+    # Rules 3 & 4: no data source yet (Analytics API gap)
+    log.info(
+        "liveops.monetization.conversion_rules_skipped",
+        reason="season-pass / flash-sale conversion not exposed by any Roblox API",
+    )
+    return changes
+
+
+async def _limited_sellout_check(game: dict, monetization: dict) -> bool:
+    """True when every limited item's Open Cloud DataStore stock counter
+    has reached its cap and the game is less than 7 days old."""
+    import httpx
+
+    from publish.open_cloud_publisher import APIS_BASE, dry_run_enabled, load_genre_account
+
+    items = monetization.get("whale_tier", {}).get("limited_items", [])
+    if not items or dry_run_enabled():
+        return False
+    account = load_genre_account(game["genre_account"])
+    async with httpx.AsyncClient(timeout=30) as client:
+        for item in items:
+            resp = await client.get(
+                f"{APIS_BASE}/datastores/v1/universes/{account.universe_id}"
+                f"/standard-datastores/datastore/entries/entry",
+                params={
+                    "datastoreName": "MonetizationGlobal_v1",
+                    "entryKey": f"stock_{item['name']}",
+                },
+                headers={"x-api-key": account.api_key},
+            )
+            if resp.status_code != 200:
+                return False  # counter missing → nothing sold yet
+            sold = int(resp.json() or 0)
+            if sold < int(item.get("stock", 0)):
+                return False
+    return True
+
+
+async def _log_monetization_change(
+    pool: asyncpg.Pool, game_id: str, trigger: str, description: str, patch: dict
+) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO balance_history
+                (game_id, metric_trigger, change_description, patch_json)
+            VALUES ($1, $2, $3, $4)
+            """,
+            uuid.UUID(game_id),
+            trigger,
+            description[:1000],
+            json.dumps(patch),
+        )
+
+
 async def _collect_metrics(pool: asyncpg.Pool, game_id: str) -> dict:
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
     async with pool.acquire() as conn:

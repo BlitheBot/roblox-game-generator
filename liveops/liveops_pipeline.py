@@ -22,7 +22,7 @@ from build.cross_promotion import get_siblings
 from monitor.discord_reporter import DiscordReporter
 from publish.open_cloud_publisher import OpenCloudPublisher
 
-from .balance_tuner import generate_balance_patch
+from .balance_tuner import generate_balance_patch, tune_monetization
 from .content_drop_generator import apply_content_patch, generate_content_patch
 from .seasonal_reskin import maybe_reskin
 from .top_games_selector import select_top_games, set_queue_status
@@ -98,6 +98,13 @@ class LiveOpsPipeline:
             _, change_lines = balance
             summary["balance_changes"].append(
                 f"{game['game_title']}: " + "; ".join(change_lines)
+            )
+
+        # Monetization rules (improvement 9 step 7)
+        monetization_changes = await tune_monetization(self._pool, game, concept)
+        if monetization_changes:
+            summary["balance_changes"].append(
+                f"{game['game_title']} (monetization): " + "; ".join(monetization_changes)
             )
 
         # Seasonal reskin (only when a window is active/near)
