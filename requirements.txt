@@ -45,3 +45,8 @@ requests==2.32.3
 
 # YAML config (templates)
 PyYAML==6.0.1
+
+# Marketing video pipeline (improvement 7)
+moviepy==2.2.1
+gTTS==2.5.4
+numpy>=1.26
