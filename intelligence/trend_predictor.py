@@ -69,7 +69,7 @@ class TrendPredictor:
                     "X-RapidAPI-Key": self._rapidapi_key,
                     "X-RapidAPI-Host": RAPIDAPI_HOST_TIKTOK,
                 },
-                params={"region": "US", "count": "30"},
+                params={"region": os.environ.get("TIKTOK_REGION", "US"), "count": "30"},
             )
             resp.raise_for_status()
             data = resp.json()
