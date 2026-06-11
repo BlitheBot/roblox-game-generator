@@ -22,6 +22,7 @@ import structlog
 
 from monitor.discord_reporter import DiscordReporter
 
+from .build_archive import archive_build, discard_build
 from .marketer import InRobloxMarketer
 from .open_cloud_publisher import OpenCloudPublisher, dry_run_enabled
 
@@ -154,6 +155,8 @@ class ApprovalGate:
                 "UPDATE pending_approvals SET processed_at = NOW() WHERE game_id = $1",
                 row["game_id"],
             )
+        # Spec 18: /builds/active only holds in-progress work
+        discard_build(pathlib.Path(row["build_dir"]))
         log.info("approval_gate.skip_finalized", game_id=str(row["game_id"]))
 
     async def _publish_approved(
@@ -199,6 +202,9 @@ class ApprovalGate:
             )
         except Exception as exc:
             log.warning("approval_gate.ab_test_failed", error=str(exc))
+        # Spec 18: archive the published build, prune to the newest
+        # MAX_BUILDS_PER_GENRE per genre
+        archive_build(pathlib.Path(row["build_dir"]), row["genre"])
         log.info(
             "approval_gate.published",
             game_id=str(row["game_id"]),
