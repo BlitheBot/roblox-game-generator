@@ -23,6 +23,7 @@ TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
 # never offered to the theming LLM and never overridable by its output
 PROGRAMMATIC_PLACEHOLDERS = {
     "{{GAME_TITLE}}",
+    "{{CURRENCY_NAME}}",
     "{{VIP_SERVER_ENABLED}}",
     "{{ROUND_SECONDS}}",
     "{{BASE_DROP_VALUE}}",
