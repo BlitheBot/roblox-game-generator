@@ -15,6 +15,7 @@ every publish gets the rate-limit retry semantics for free.
 import os
 import pathlib
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import asyncpg
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
 log = structlog.get_logger()
 
 APPROVALS_TO_AUTONOMY = 5
+# A row approved but unpublished for longer than this is treated as stuck
+STUCK_PUBLISH_MINUTES = 30
+# Don't re-alert about the same stuck row more than once per this window
+STUCK_ALERT_COOLDOWN_HOURS = 1
 
 
 class ApprovalGate:
@@ -151,6 +156,105 @@ class ApprovalGate:
                     game_id=str(row["game_id"]),
                     error=str(exc),
                 )
+                # A swallowed exception here was the silent-publish bug: the
+                # operator was told "publishing soon" and never heard again.
+                await self._reporter.alert(
+                    f"Publish error for **{row['game_title']}** [{row['genre']}]: "
+                    f"{str(exc)[:400]}. The row is left queued — fix the cause and "
+                    f"`!retry {row['game_id']}`, or it will retry next cycle."
+                )
+
+        # Loudly flag anything approved but still unpublished past the SLA
+        await self.alert_stuck_rows()
+
+    async def alert_stuck_rows(self) -> None:
+        """Spec/FIX 1: alert when a row has been approved but unpublished for
+        more than STUCK_PUBLISH_MINUTES, deduped per game via
+        orchestrator_state so the operator hears about it exactly once."""
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_PUBLISH_MINUTES)
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT game_id, game_title, genre FROM pending_approvals
+                WHERE status = 'approved'
+                  AND processed_at IS NULL
+                  AND decided_at IS NOT NULL
+                  AND decided_at < $1
+                """,
+                cutoff,
+            )
+        for row in rows:
+            key = f"alert_cooldown:stuck_publish:{row['game_id']}"
+            last = await self._state_get(key)
+            if last:
+                try:
+                    if datetime.now(timezone.utc) - datetime.fromisoformat(last) < timedelta(
+                        hours=STUCK_ALERT_COOLDOWN_HOURS
+                    ):
+                        continue
+                except ValueError:
+                    pass
+            await self._reporter.alert(
+                f"Publish stuck — **{row['game_title']}** has been approved for "
+                f"{STUCK_PUBLISH_MINUTES}+ minutes without publishing. Check "
+                f"credentials for the `{row['genre']}` account "
+                f"(`!retry {row['game_id']}`)."
+            )
+            await self._state_set(key, datetime.now(timezone.utc).isoformat())
+
+    async def retry(
+        self, game_id_str: str, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
+    ) -> str:
+        """FIX 1: manually re-trigger publishing for a stuck approved row.
+        Returns a human-readable result string for the Discord reply."""
+        try:
+            game_id = uuid.UUID(game_id_str)
+        except ValueError:
+            return f"`{game_id_str}` is not a valid game id."
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT * FROM pending_approvals
+                WHERE game_id = $1 AND status = 'approved' AND processed_at IS NULL
+                """,
+                game_id,
+            )
+        if row is None:
+            return f"No stuck approved publish found for `{game_id_str}`."
+        try:
+            await self._publish_approved(row, publisher, marketer)
+        except Exception as exc:
+            return f"Retry failed for **{row['game_title']}**: {str(exc)[:400]}"
+        async with self._pool.acquire() as conn:
+            still_pending = await conn.fetchval(
+                "SELECT processed_at IS NULL FROM pending_approvals WHERE game_id = $1",
+                game_id,
+            )
+        if still_pending:
+            return (
+                f"**{row['game_title']}** is still pending (rate-limited or deferred) "
+                f"— it will keep retrying automatically."
+            )
+        return f"✅ Re-published **{row['game_title']}**."
+
+    async def _state_get(self, key: str) -> str | None:
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT value FROM orchestrator_state WHERE key = $1", key
+            )
+
+    async def _state_set(self, key: str, value: str) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO orchestrator_state (key, value, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (key) DO UPDATE
+                    SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at
+                """,
+                key,
+                value,
+            )
 
     async def _finalize_skip(self, row) -> None:
         async with self._pool.acquire() as conn:

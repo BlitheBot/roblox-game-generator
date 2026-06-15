@@ -145,7 +145,13 @@ class OpenCloudPublisher:
                 ),
             )
 
-        account = load_genre_account(genre)
+        # Missing/misconfigured genre credentials must surface as a normal
+        # failed PublishResult (which the ApprovalGate alerts on) rather than
+        # raising — a raise here is swallowed silently by the queue processor.
+        try:
+            account = load_genre_account(genre)
+        except RuntimeError as exc:
+            return PublishResult(success=False, error=str(exc))
         headers = {"x-api-key": account.api_key}
 
         async with httpx.AsyncClient(timeout=300) as client:
