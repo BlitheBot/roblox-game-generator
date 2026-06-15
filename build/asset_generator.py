@@ -24,17 +24,46 @@ log = structlog.get_logger()
 
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "google/gemini-2.5-flash-image")
 
-THUMBNAIL_PROMPT = (
+# Genre-specific thumbnail prompts — tuned to produce compelling, scroll-
+# stopping store art. Keyed by mechanic_tag; falls back to GENERIC.
+THUMBNAIL_PROMPTS = {
+    "idle_tycoon": (
+        "Roblox game thumbnail, {game_title}, colorful cartoon tycoon factory, "
+        "coins and money flying everywhere, happy cartoon characters working machines, "
+        "bright vibrant colors, dynamic diagonal composition, professional game art style, "
+        "no text, high contrast, exciting and energetic"
+    ),
+    "pet_collect": (
+        "Roblox game thumbnail, {game_title}, cute cartoon pets floating on magical island, "
+        "rainbow colors, sparkles and stars everywhere, glowing egg in center, "
+        "adorable character expressions, pastel color palette, professional Roblox art style, "
+        "no text, magical and cute atmosphere"
+    ),
+    "survival_horror": (
+        "Roblox game thumbnail, {game_title}, dark scary abandoned building at night, "
+        "cartoon character running from monster shadow, dramatic red lighting, "
+        "fog and atmosphere, intense horror mood, professional Roblox game art, "
+        "no text, dark color palette with red accents"
+    ),
+    "incremental_sim": (
+        "Roblox game thumbnail, {game_title}, clean modern facility with glowing progress bars, "
+        "cartoon character surrounded by floating numbers and coins, "
+        "satisfying progression visual, blue and white color scheme, "
+        "professional clean art style, no text, modern and satisfying"
+    ),
+}
+
+GENERIC_THUMBNAIL_PROMPT = (
     "Roblox game thumbnail, {game_title}, {genre} style, vibrant colors, "
     "cartoon 3D art style, dynamic action scene, no text overlays, "
     "high contrast, eye-catching for young audience"
 )
 
-# Higher-effort variant used for breakout games and A/B testing (spec 5.2, 6.2)
-THUMBNAIL_PROMPT_ALT = (
-    "Roblox game thumbnail, {game_title}, {genre} theme, dramatic lighting, "
-    "cinematic composition, cartoon 3D render, expressive character close-up, "
-    "saturated colors, no text, designed to maximize click-through for kids"
+# Appended for the higher-effort variant used on breakout games / A-B testing
+# (spec 5.2, 6.2) — pushes the same genre scene toward cinematic close-ups.
+THUMBNAIL_ALT_SUFFIX = (
+    ", dramatic cinematic lighting, expressive character close-up, "
+    "maximized click-through, premium splash-art quality"
 )
 
 
@@ -53,10 +82,13 @@ class AssetGenerator:
         build_dir and returns {"thumbnail": path, "icon": path, "description": str}.
         """
         game_title = concept.get("game_title", "Roblox Game")
-        genre = concept.get("mechanic_tag", "simulator").replace("_", " ")
+        mechanic_tag = concept.get("mechanic_tag", "simulator")
+        genre = mechanic_tag.replace("_", " ")
 
-        template = THUMBNAIL_PROMPT_ALT if alt_prompt else THUMBNAIL_PROMPT
+        template = THUMBNAIL_PROMPTS.get(mechanic_tag, GENERIC_THUMBNAIL_PROMPT)
         prompt = template.format(game_title=game_title, genre=genre)
+        if alt_prompt:
+            prompt += THUMBNAIL_ALT_SUFFIX
 
         image = await self._generate_image(prompt)
 
@@ -135,11 +167,16 @@ class AssetGenerator:
             {
                 "role": "system",
                 "content": (
-                    "Write an SEO-optimized Roblox game description. Hard limit: 1000 "
-                    "characters. Include genre keywords, action verbs, and the provided "
-                    "trending terms naturally. Family-friendly tone, short punchy "
-                    "sentences, 2-4 relevant emoji max. Output the description text only "
-                    "— no headers, no quotes."
+                    "Write an SEO-optimized Roblox game description. Hard requirements:\n"
+                    "1. The FIRST sentence must clearly state the game's core loop "
+                    "(what the player actually does, moment to moment).\n"
+                    "2. Naturally weave in 3-5 relevant trending keywords from the list "
+                    "provided.\n"
+                    "3. End with a clear call to action (e.g. 'Play now', 'Join today').\n"
+                    "4. Use relevant emoji, maximum 4 total.\n"
+                    "5. Hard limit: under 1000 characters.\n"
+                    "Family-friendly tone, short punchy sentences. Output the description "
+                    "text only — no headers, no quotes."
                 ),
             },
             {
