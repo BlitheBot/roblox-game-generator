@@ -1,0 +1,163 @@
+{
+  "tree": {
+    "asset_id": 125459331,
+    "name": "Tree House",
+    "votes": 10000,
+    "up_percent": 89,
+    "score": 9.79
+  },
+  "bush": {
+    "asset_id": 8647777369,
+    "name": "Bush",
+    "votes": 2000,
+    "up_percent": 93,
+    "score": 2.79
+  },
+  "flower": {
+    "asset_id": 8344171779,
+    "name": "Flower Bush",
+    "votes": 300,
+    "up_percent": 95,
+    "score": 1.235
+  },
+  "grass patch": {
+    "asset_id": 2542934825,
+    "name": "Patch of Grass",
+    "votes": 10,
+    "up_percent": 100,
+    "score": 1.01
+  },
+  "treasure chest": {
+    "asset_id": 260319753,
+    "name": "Treasure Chest",
+    "votes": 400,
+    "up_percent": 88,
+    "score": 1.232
+  },
+  "stone wall": {
+    "asset_id": 3528925155,
+    "name": "Stone Border Wall Around Baseplate ",
+    "votes": 200,
+    "up_percent": 91,
+    "score": 1.092
+  },
+  "brick wall": {
+    "asset_id": 8723301333,
+    "name": "Brick Wall",
+    "votes": 1000,
+    "up_percent": 81,
+    "score": 1.62
+  },
+  "fountain": {
+    "asset_id": 2101548957,
+    "name": "Water fountain",
+    "votes": 400,
+    "up_percent": 80,
+    "score": 1.12
+  },
+  "well": {
+    "asset_id": 12194196717,
+    "name": "Medieval Well",
+    "votes": 20,
+    "up_percent": 95,
+    "score": 0.969
+  },
+  "lamp post": {
+    "asset_id": 5036801877,
+    "name": "medieval lamp post",
+    "votes": 80,
+    "up_percent": 95,
+    "score": 1.026
+  },
+  "street light": {
+    "asset_id": 404475960,
+    "name": "Street light",
+    "votes": 4000,
+    "up_percent": 91,
+    "score": 4.55
+  },
+  "barrel": {
+    "asset_id": 470360075,
+    "name": "Barrel",
+    "votes": 200,
+    "up_percent": 97,
+    "score": 1.164
+  },
+  "crate": {
+    "asset_id": 182451181,
+    "name": "Wooden Crate",
+    "votes": 5000,
+    "up_percent": 84,
+    "score": 5.04
+  },
+  "box": {
+    "asset_id": 154557101,
+    "name": "Open Box",
+    "votes": 400,
+    "up_percent": 93,
+    "score": 1.302
+  },
+  "bench": {
+    "asset_id": 10305255634,
+    "name": "aesthetic pink bench swing",
+    "votes": 400,
+    "up_percent": 93,
+    "score": 1.302
+  },
+  "chair": {
+    "asset_id": 489617269,
+    "name": "Chair",
+    "votes": 2000,
+    "up_percent": 95,
+    "score": 2.85
+  },
+  "table": {
+    "asset_id": 839550130,
+    "name": "Table",
+    "votes": 1000,
+    "up_percent": 93,
+    "score": 1.86
+  },
+  "billboard": {
+    "asset_id": 367838693,
+    "name": "Billboard",
+    "votes": 200,
+    "up_percent": 95,
+    "score": 1.14
+  },
+  "fence": {
+    "asset_id": 4715423769,
+    "name": "Military base | Border fence",
+    "votes": 1000,
+    "up_percent": 93,
+    "score": 1.86
+  },
+  "gate": {
+    "asset_id": 9083814252,
+    "name": "Metal Gated Fence",
+    "votes": 500,
+    "up_percent": 90,
+    "score": 1.35
+  },
+  "cloud": {
+    "asset_id": 71885479,
+    "name": "Cloud",
+    "votes": 500,
+    "up_percent": 91,
+    "score": 1.365
+  },
+  "rock": {
+    "asset_id": 10170605188,
+    "name": "happi rock",
+    "votes": 2000,
+    "up_percent": 98,
+    "score": 2.94
+  },
+  "boulder": {
+    "asset_id": 13675116006,
+    "name": "Boulders and Rocks on gravel with PBR textures",
+    "votes": 20,
+    "up_percent": 96,
+    "score": 0.9792
+  }
+}
