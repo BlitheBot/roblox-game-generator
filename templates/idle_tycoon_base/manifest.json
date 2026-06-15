@@ -21,6 +21,7 @@
     },
     "files": [
         "default.project.json",
+        "src/ServerScriptService/LightingService.server.luau",
         "src/shared/Config.luau",
         "src/shared/Types.luau",
         "src/server/Main.server.luau",

@@ -19,6 +19,7 @@
     },
     "files": [
         "default.project.json",
+        "src/ServerScriptService/LightingService.server.luau",
         "src/shared/Config.luau",
         "src/server/Main.server.luau",
         "src/server/MonsterAI.luau",

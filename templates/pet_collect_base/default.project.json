@@ -14,7 +14,8 @@
             "ToolboxAssets": { "$className": "Folder" }
         },
         "ServerScriptService": {
-            "Server": { "$path": "src/server" }
+            "Server": { "$path": "src/server" },
+            "World": { "$path": "src/ServerScriptService" }
         },
         "StarterPlayer": {
             "StarterPlayerScripts": {
