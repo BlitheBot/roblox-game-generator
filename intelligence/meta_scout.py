@@ -38,12 +38,25 @@ class MetaScout:
     """Gathers raw trend signals each cycle."""
 
     def __init__(self) -> None:
-        self._reddit = praw.Reddit(
-            client_id=os.environ["REDDIT_CLIENT_ID"],
-            client_secret=os.environ["REDDIT_CLIENT_SECRET"],
-            user_agent=os.environ.get("REDDIT_USER_AGENT", "roblox-game-studio/1.0"),
-            check_for_async=False,
-        )
+        # Reddit is one optional source among many — never a hard dependency.
+        # Missing creds must not crash orchestrator init (which constructs
+        # MetaScout before any cycle runs); Reddit scraping is skipped instead.
+        client_id = os.environ.get("REDDIT_CLIENT_ID", "")
+        client_secret = os.environ.get("REDDIT_CLIENT_SECRET", "")
+        self._reddit = None
+        if client_id and client_secret:
+            try:
+                self._reddit = praw.Reddit(
+                    client_id=client_id,
+                    client_secret=client_secret,
+                    user_agent=os.environ.get("REDDIT_USER_AGENT", "roblox-game-studio/1.0"),
+                    check_for_async=False,
+                )
+            except Exception as exc:
+                log.warning("meta_scout.reddit_init_failed", error=str(exc))
+                self._reddit = None
+        else:
+            log.warning("meta_scout.reddit_not_configured")
 
     async def run(self) -> MetaScoutResult:
         raw_data = await asyncio.gather(
@@ -74,7 +87,10 @@ class MetaScout:
         return games
 
     def _fetch_reddit_hot(self) -> list[dict]:
-        """Sync PRAW call wrapped for asyncio — returns hot r/roblox posts."""
+        """Sync PRAW call wrapped for asyncio — returns hot r/roblox posts.
+        Returns [] when Reddit is not configured."""
+        if self._reddit is None:
+            return []
         posts = []
         try:
             for submission in self._reddit.subreddit("roblox").hot(limit=30):
