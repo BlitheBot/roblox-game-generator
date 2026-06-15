@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 import httpx
 import structlog
 
+from util import redact_url
+
 log = structlog.get_logger()
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -116,5 +118,5 @@ async def publish(video_path: pathlib.Path, metadata: dict) -> str:
                 )
 
     url = f"https://www.youtube.com/watch?v={video_id}"
-    log.info("marketing.youtube_published", url=url)
+    log.info("marketing.youtube_published", url=redact_url(url))
     return url

@@ -17,7 +17,6 @@ from .roblox_games import fetch_top_games
 log = structlog.get_logger()
 
 DEVFORUM_URL     = "https://devforum.roblox.com/latest.json"
-YOUTUBE_SEARCH   = "https://www.googleapis.com/youtube/v3/search"
 
 
 @dataclass
