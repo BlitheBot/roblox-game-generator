@@ -9,3 +9,9 @@ build/__pycache__/
 .pytest_cache/
 *.rbxl
 /builds/
+builds/
+
+# Runtime-generated files (regenerated on the VPS) — keep out of git so
+# `git pull` never conflicts with locally refreshed copies
+data/name_blacklist.json
+rokit.toml
