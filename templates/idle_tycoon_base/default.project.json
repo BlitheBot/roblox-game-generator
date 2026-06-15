@@ -32,6 +32,9 @@
                 }
             }
         },
+        "StarterGui": {
+            "$path": "src/StarterGui"
+        },
         "Workspace": {
             "$properties": {
                 "FilteringEnabled": true

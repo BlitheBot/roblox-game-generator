@@ -22,6 +22,7 @@
         "src/ServerScriptService/LightingService.server.luau",
         "src/ServerScriptService/MapBuilder.server.luau",
         "src/ServerScriptService/DecorationService.server.luau",
+        "src/ServerScriptService/SoundService.server.luau",
         "src/shared/Config.luau",
         "src/server/Main.server.luau",
         "src/client/Main.client.luau",
@@ -29,6 +30,8 @@
         "src/client/RetentionUI.client.luau",
         "src/server/CrossPromoManager.server.luau",
         "src/server/MonetizationService.server.luau",
-        "src/client/MonetizationUI.client.luau"
+        "src/client/MonetizationUI.client.luau",
+        "src/StarterGui/LoadingScreen.client.luau",
+        "src/client/GameFeel.client.luau"
     ]
 }

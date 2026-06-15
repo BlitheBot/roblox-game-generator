@@ -20,6 +20,9 @@
                 "Client": { "$path": "src/client" }
             }
         },
+        "StarterGui": {
+            "$path": "src/StarterGui"
+        },
         "Workspace": {
             "Lobby": { "$className": "Folder" },
             "Arena": { "$className": "Folder" }
