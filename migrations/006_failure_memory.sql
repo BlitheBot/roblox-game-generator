@@ -15,7 +15,17 @@ CREATE TABLE IF NOT EXISTS failure_memory (
 );
 
 -- Each game contributes at most one failure to its combo
-ALTER TABLE published_games
-    ADD COLUMN IF NOT EXISTS failure_recorded BOOLEAN NOT NULL DEFAULT FALSE;
+-- Guarded so a re-run against a table owned by another role skips cleanly
+-- instead of tripping ALTER TABLE's ownership check (see 001 header note).
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'published_games'
+          AND column_name = 'failure_recorded'
+    ) THEN
+        EXECUTE 'ALTER TABLE published_games ADD COLUMN failure_recorded BOOLEAN NOT NULL DEFAULT FALSE';
+    END IF;
+END $$;
 
 COMMIT;

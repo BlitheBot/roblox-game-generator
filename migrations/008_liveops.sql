@@ -12,7 +12,14 @@ CREATE TABLE IF NOT EXISTS liveops_queue (
     created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_liveops_queue_week ON liveops_queue (week_start);
+-- Indexes guarded on catalog presence so a re-run against tables owned by
+-- another role skips cleanly instead of tripping the ownership check that
+-- CREATE INDEX runs when it opens the table (see 001 header note).
+DO $$ BEGIN
+    IF to_regclass('public.idx_liveops_queue_week') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_liveops_queue_week ON liveops_queue (week_start)';
+    END IF;
+END $$;
 
 -- Balance change audit trail
 CREATE TABLE IF NOT EXISTS balance_history (
@@ -24,7 +31,11 @@ CREATE TABLE IF NOT EXISTS balance_history (
     patch_json         JSONB
 );
 
-CREATE INDEX IF NOT EXISTS idx_balance_history_game ON balance_history (game_id);
+DO $$ BEGIN
+    IF to_regclass('public.idx_balance_history_game') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_balance_history_game ON balance_history (game_id)';
+    END IF;
+END $$;
 
 -- Seasonal reskin originals + scheduled revert
 CREATE TABLE IF NOT EXISTS seasonal_overrides (
@@ -38,8 +49,12 @@ CREATE TABLE IF NOT EXISTS seasonal_overrides (
     reverted               BOOLEAN DEFAULT FALSE
 );
 
-CREATE INDEX IF NOT EXISTS idx_seasonal_overrides_due
-    ON seasonal_overrides (revert_after) WHERE reverted = FALSE;
+DO $$ BEGIN
+    IF to_regclass('public.idx_seasonal_overrides_due') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_seasonal_overrides_due '
+                'ON seasonal_overrides (revert_after) WHERE reverted = FALSE';
+    END IF;
+END $$;
 
 -- Weekly run log
 CREATE TABLE IF NOT EXISTS liveops_log (

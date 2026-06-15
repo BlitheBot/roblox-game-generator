@@ -13,7 +13,13 @@ CREATE TABLE IF NOT EXISTS thumbnail_tests (
     winner        BOOLEAN
 );
 
-CREATE INDEX IF NOT EXISTS idx_thumbnail_tests_game ON thumbnail_tests (game_id);
+-- Guarded so a re-run against a table owned by another role skips cleanly
+-- instead of tripping CREATE INDEX's ownership check (see 001 header note).
+DO $$ BEGIN
+    IF to_regclass('public.idx_thumbnail_tests_game') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_thumbnail_tests_game ON thumbnail_tests (game_id)';
+    END IF;
+END $$;
 
 -- Supervised-mode approval queue (spec Section 12)
 CREATE TABLE IF NOT EXISTS pending_approvals (
