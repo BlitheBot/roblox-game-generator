@@ -100,6 +100,11 @@ class AutoValidator:
         # Check 6: project.json structure
         failures.extend(self._check_project_json(build_dir))
 
+        # Check 7: visual quality gate — a build must ship lighting, a map, a
+        # loading screen and ambient sound or it goes back to LuauAgent on the
+        # same retry ladder as code failures.
+        failures.extend(self._check_visual_quality(build_dir))
+
         result = ValidationResult(
             passed=not failures, failures=failures, tos_flagged=tos_flagged
         )
@@ -187,6 +192,36 @@ class AutoValidator:
                 failures.append(
                     "server handles RemoteEvents but shows no typeof() argument validation"
                 )
+        return failures
+
+    @staticmethod
+    def _check_visual_quality(build_dir: pathlib.Path) -> list[str]:
+        """A game must meet minimum visual-polish standards before publishing
+        so no build ever ships looking like an incomplete baseplate."""
+        failures: list[str] = []
+
+        # Must have a LightingService script
+        if not (build_dir / "src/ServerScriptService/LightingService.server.luau").exists():
+            failures.append("Missing LightingService — game will have default ugly lighting")
+
+        # Must have a MapBuilder script
+        if not (build_dir / "src/ServerScriptService/MapBuilder.server.luau").exists():
+            failures.append("Missing MapBuilder — game will have no map")
+
+        # Must have a loading screen
+        starter_gui = build_dir / "src/StarterGui"
+        loading_exists = (
+            any("loading" in f.name.lower() for f in starter_gui.rglob("*.luau"))
+            if starter_gui.exists()
+            else False
+        )
+        if not loading_exists:
+            failures.append("Missing loading screen — players will see blank baseplate on join")
+
+        # Must have ambient sound
+        if not (build_dir / "src/ServerScriptService/SoundService.server.luau").exists():
+            failures.append("Missing SoundService — game will be silent")
+
         return failures
 
     @staticmethod
