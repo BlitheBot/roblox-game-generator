@@ -186,7 +186,7 @@ class PerformanceMonitor:
                     await self._reporter.alert(
                         f"Account for genre [{genre}] returned {resp.status_code} — "
                         f"possibly banned/restricted. Publishing paused for this "
-                        f"account only (`!resume-account {genre}` after review)."
+                        f"account only (`!resume {genre}` after review)."
                     )
                 else:
                     async with self._pool.acquire() as conn:

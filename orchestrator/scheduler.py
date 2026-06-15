@@ -88,6 +88,16 @@ class Orchestrator:
         self._bot            = create_bot(self._pool)
         self._approval_gate  = ApprovalGate(self._pool, self._reporter, self._bot)
 
+        # Give the bot the references its ops commands need (!force/!status →
+        # orchestrator, !retry → approval gate + publisher + marketer)
+        if self._bot is not None:
+            self._bot.attach(
+                orchestrator=self,
+                approval_gate=self._approval_gate,
+                publisher=self._publisher,
+                marketer=self._marketer,
+            )
+
         # Discord bot runs alongside the scheduler (DM approvals, spec 12)
         token = os.environ.get("DISCORD_BOT_TOKEN", "")
         if self._bot is not None and token:
