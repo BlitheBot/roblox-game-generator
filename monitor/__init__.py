@@ -3,6 +3,7 @@ from intelligence.scoring_engine import FeedbackLoop  # runs after each monitor 
 
 from .breakout import BreakoutDetector, UpdateCadence
 from .discord_reporter import DiscordReporter
+from .failure_memory import FailureMemory
 from .performance_monitor import PerformanceMonitor
 
 __all__ = [
@@ -10,5 +11,6 @@ __all__ = [
     "BreakoutDetector",
     "UpdateCadence",
     "FeedbackLoop",
+    "FailureMemory",
     "DiscordReporter",
 ]

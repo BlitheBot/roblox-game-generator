@@ -10,13 +10,23 @@
         "{{GAME_PASSES_LUA}}": "Lua table literal of game passes",
         "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items",
         "{{VIP_SERVER_ENABLED}}": "true|false",
-        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids",
+        "{{CROSS_PROMO_LUA}}": "Lua table literal of sibling games on this genre account: {title, universe_id, place_id}",
+        "{{RETENTION_REWARD_BOOST}}": "Numeric multiplier on milestone-streak daily rewards (LiveOps balance knob, default 1)",
+        "{{SURVIVAL_REWARD}}": "Numeric currency for surviving a round (LiveOps balance knob, default 50)",
+        "{{MAPS_LUA}}": "Lua table literal of map names (LiveOps content drops can append variants)",
+        "{{MONETIZATION_LUA}}": "Lua table literal of the three-tier monetization config (shop items, tiers, product ids)"
     },
     "files": [
         "default.project.json",
         "src/shared/Config.luau",
         "src/server/Main.server.luau",
         "src/server/MonsterAI.luau",
-        "src/client/Main.client.luau"
+        "src/client/Main.client.luau",
+        "src/server/RetentionService.server.luau",
+        "src/client/RetentionUI.client.luau",
+        "src/server/CrossPromoManager.server.luau",
+        "src/server/MonetizationService.server.luau",
+        "src/client/MonetizationUI.client.luau"
     ]
 }

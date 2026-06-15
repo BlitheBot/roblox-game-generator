@@ -5,6 +5,7 @@
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local DataService = require(script.Parent.DataService)
@@ -35,6 +36,33 @@ local function pushState(player: Player)
 		Upgrades = data.Upgrades,
 		CanPrestige = PrestigeService.CanPrestige(player),
 	})
+end
+
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	if typeof(amount) == "number" and amount > 0 then
+		DataService.AddCurrency(player, amount)
+		pushState(player)
+	end
+end)
+
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	if typeof(amount) ~= "number" or amount <= 0 then
+		return false
+	end
+	local ok = DataService.TrySpend(player, amount)
+	if ok then
+		pushState(player)
+	end
+	return ok
 end
 
 local function onPlayerAdded(player: Player)

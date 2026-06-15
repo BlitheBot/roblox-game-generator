@@ -5,6 +5,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 
@@ -92,6 +93,34 @@ local function pushState(player: Player)
 	})
 end
 
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	local data = sessionData[player.UserId]
+	if data and typeof(amount) == "number" and amount > 0 then
+		data.Currency += amount
+		data.TotalEarned += amount
+		pushState(player)
+	end
+end)
+
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	local data = sessionData[player.UserId]
+	if not data or typeof(amount) ~= "number" or amount <= 0 or data.Currency < amount then
+		return false
+	end
+	data.Currency -= amount
+	pushState(player)
+	return true
+end
+
 Players.PlayerAdded:Connect(function(player)
 	load(player)
 	task.spawn(function()
@@ -99,6 +128,16 @@ Players.PlayerAdded:Connect(function(player)
 			local data = sessionData[player.UserId]
 			if data then
 				local growth = computeRates(data)
+				-- Bonuses from drop-in systems (absent → 1): retention
+				-- streaks and monetization multipliers
+				local streakMult = player:GetAttribute("StreakMultiplier")
+				if typeof(streakMult) == "number" then
+					growth *= streakMult
+				end
+				local monetizationMult = player:GetAttribute("MonetizationMultiplier")
+				if typeof(monetizationMult) == "number" then
+					growth *= monetizationMult
+				end
 				data.Resource += growth
 				pushState(player)
 			end

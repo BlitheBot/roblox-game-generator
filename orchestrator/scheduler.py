@@ -25,6 +25,7 @@ from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
 from monitor import BreakoutDetector, DiscordReporter, PerformanceMonitor, UpdateCadence
+from monitor.failure_memory import FailureMemory
 from publish.approval_gate import ApprovalGate
 from publish.discord_bot import ApprovalBot, create_bot
 from publish.marketer import InRobloxMarketer
@@ -60,6 +61,7 @@ class Orchestrator:
         self._marketer:      InRobloxMarketer | None = None
         self._publisher:     OpenCloudPublisher | None = None
         self._approval_gate: ApprovalGate | None = None
+        self._failure_memory: FailureMemory | None = None
         self._bot:           ApprovalBot | None = None
         self._bot_task:      asyncio.Task | None = None
 
@@ -82,6 +84,7 @@ class Orchestrator:
         self._breakout       = BreakoutDetector(self._pool, self._reporter)
         self._marketer       = InRobloxMarketer(self._pool)
         self._publisher      = OpenCloudPublisher(self._pool)
+        self._failure_memory = FailureMemory(self._pool)
         self._bot            = create_bot(self._pool)
         self._approval_gate  = ApprovalGate(self._pool, self._reporter, self._bot)
 
@@ -159,6 +162,53 @@ class Orchestrator:
             trigger=CronTrigger(hour=3, minute=0),
             id="update_cycle",
             name="Live Game Update Cycle",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
+        # 48h description refresh (improvement 4) — checked every 6 hours
+        # so each game refreshes as soon as its 48h window lapses
+        self._scheduler.add_job(
+            self._run_description_refresh,
+            trigger=IntervalTrigger(hours=6),
+            id="description_refresh_48h",
+            name="48h SEO Description Refresh",
+            replace_existing=True,
+            misfire_grace_time=1800,
+            coalesce=True,
+        )
+
+        # Name blacklist refresh — every 24h (get_blacklist() also lazily
+        # refreshes on read, this keeps the file warm between builds)
+        self._scheduler.add_job(
+            self._run_blacklist_refresh,
+            trigger=IntervalTrigger(hours=24),
+            id="name_blacklist_refresh",
+            name="Game Name Blacklist Refresh",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
+        # LiveOps weekly cycle (improvement 8) — Mondays 10:00, independent
+        # of the 6-hour generation cycle; gated by ENABLE_LIVEOPS
+        self._scheduler.add_job(
+            self._run_liveops_cycle,
+            trigger=CronTrigger(day_of_week="mon", hour=10, minute=0),
+            id="liveops_weekly",
+            name="Weekly LiveOps Cycle",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
+        # Seasonal reskin revert check — daily 06:00
+        self._scheduler.add_job(
+            self._run_seasonal_reverts,
+            trigger=CronTrigger(hour=6, minute=0),
+            id="seasonal_reverts",
+            name="Seasonal Reskin Revert Check",
             replace_existing=True,
             misfire_grace_time=3600,
             coalesce=True,
@@ -249,9 +299,12 @@ class Orchestrator:
         # Step 4: Load signal weights (FeedbackLoop adjustments)
         signal_weights = await self._feedback_loop.get_weights(self._pool)
 
-        # Step 5: Score
+        # Step 5: Score (hard-excluding FailureMemory-suppressed combos)
+        assert self._failure_memory
+        suppressed = await self._failure_memory.get_suppressed()
         scored = self._scoring_eng.score(
-            meta_result, trend_result, mapped, gap_results, signal_weights
+            meta_result, trend_result, mapped, gap_results, signal_weights,
+            suppressed_combos=suppressed,
         )
         log.info("cycle.scored", count=len(scored), top_score=scored[0].opportunity_score if scored else 0)
 
@@ -375,6 +428,21 @@ class Orchestrator:
         except Exception:
             log.error("cycle.monitor.feedback_failed", traceback=traceback.format_exc())
 
+        # FailureMemory (improvement 6): record games dead after 30 days,
+        # alert when a mechanic+genre combo hits permanent suppression
+        try:
+            assert self._failure_memory
+            newly_suppressed = await self._failure_memory.record_failures()
+            for mechanic, genre in newly_suppressed:
+                await self._discord_alert(
+                    f"⛔ Combo **{mechanic} / {genre}** permanently suppressed "
+                    f"after 3 failed games (<5 CCU after 30 days). The scoring "
+                    f"engine will skip it. Re-enable with `!unsuppress "
+                    f"{mechanic} {genre}`."
+                )
+        except Exception:
+            log.error("cycle.monitor.failure_memory_failed", traceback=traceback.format_exc())
+
         try:
             await self._reporter.run_threshold_checks()
         except Exception:
@@ -441,8 +509,16 @@ class Orchestrator:
             game_id = str(game["id"])
             try:
                 await self._marketer.refresh_for_games([game_id], keywords)
-                if game["status"] == "breakout":
-                    await self._breakout_content_drop(game)
+                # Breakouts get their daily content drop; any game with a
+                # pending cross-promo marker gets a rebuilt place version
+                # so new sibling billboards actually ship (improvement 5)
+                cross_promo_pending = (
+                    await self._get_state(f"cross_promo_refresh:{game_id}")
+                ) == "pending"
+                if game["status"] == "breakout" or cross_promo_pending:
+                    await self._content_drop(game)
+                    if cross_promo_pending:
+                        await self._clear_state(f"cross_promo_refresh:{game_id}")
                 await UpdateCadence.mark_updated(self._pool, game_id)
             except Exception:
                 log.error(
@@ -452,12 +528,15 @@ class Orchestrator:
                 )
         log.info("cycle.update.complete", due=len(due))
 
-    async def _breakout_content_drop(self, game) -> None:
-        """Spec 14: regenerate the breakout game's source from its stored
-        concept (fresh theme/balance pass) and push a new place version.
+    async def _content_drop(self, game) -> None:
+        """Spec 14: regenerate the game's source from its stored concept
+        (fresh theme/balance pass + current sibling billboards) and push a
+        new place version. Used for breakout daily drops and cross-promo
+        billboard refreshes.
         TODO: richer content drops need update-aware LuauAgent prompting
         with the live game's source as context."""
         from build.auto_validator import AutoValidator
+        from build.cross_promotion import get_siblings
         from build.luau_agent import LuauAgent
         from build.rojo_builder import RojoBuilder
 
@@ -476,6 +555,9 @@ class Orchestrator:
         concept = (
             json.loads(concept_json) if isinstance(concept_json, str) else dict(concept_json)
         )
+        concept["cross_promo_siblings"] = await get_siblings(
+            self._pool, game["genre_account"], exclude_game_id=str(game["id"])
+        )
         build_dir = await LuauAgent().generate(concept, f"update_{game['id']}")
         rojo_result = await RojoBuilder().build(build_dir)
         validation = await AutoValidator().validate(build_dir, rojo_result)
@@ -489,6 +571,67 @@ class Orchestrator:
         await self._publisher.publish_update(
             game["genre_account"], game["place_id"], rojo_result.rbxl_path
         )
+
+    # ─────────────────────────────────────────────────────────
+    # LiveOps (improvement 8)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_liveops_cycle(self) -> None:
+        assert self._pool and self._publisher and self._reporter
+        try:
+            from liveops.liveops_pipeline import LiveOpsPipeline
+
+            pipeline = LiveOpsPipeline(self._pool, self._publisher, self._reporter)
+            await pipeline.run_weekly_cycle(await self._get_meta_keywords())
+        except Exception:
+            log.error("cycle.liveops_failed", traceback=traceback.format_exc())
+            await self._discord_alert(
+                "Weekly LiveOps cycle crashed — check logs. Will retry next Monday."
+            )
+
+    async def _run_seasonal_reverts(self) -> None:
+        assert self._pool
+        try:
+            from liveops.seasonal_reskin import revert_due_overrides
+
+            reverted = await revert_due_overrides(self._pool)
+            for title in reverted:
+                await self._discord_alert(
+                    f"🔄 Seasonal reskin reverted: **{title}** — original title, "
+                    f"description, and thumbnail restored."
+                )
+        except Exception:
+            log.error("cycle.seasonal_revert_failed", traceback=traceback.format_exc())
+
+    # ─────────────────────────────────────────────────────────
+    # 48h description refresh (improvement 4)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_description_refresh(self) -> None:
+        """Refresh the SEO description of every live game whose last
+        refresh is older than 48h, using the latest MetaScout keywords."""
+        assert self._marketer
+        try:
+            keywords = await self._get_meta_keywords()
+            refreshed = await self._marketer.refresh_due_descriptions(keywords)
+            if refreshed:
+                log.info("cycle.description_refresh.complete", refreshed=refreshed)
+        except Exception:
+            log.error(
+                "cycle.description_refresh_failed", traceback=traceback.format_exc()
+            )
+
+    # ─────────────────────────────────────────────────────────
+    # Name blacklist refresh (24h)
+    # ─────────────────────────────────────────────────────────
+
+    async def _run_blacklist_refresh(self) -> None:
+        from intelligence.name_blacklist import refresh_blacklist
+
+        try:
+            await refresh_blacklist(force=True)
+        except Exception:
+            log.error("cycle.blacklist_refresh_failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
@@ -542,6 +685,20 @@ class Orchestrator:
             return json.loads(raw) if raw else []
         except json.JSONDecodeError:
             return []
+
+    async def _get_state(self, key: str) -> str | None:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT value FROM orchestrator_state WHERE key = $1", key
+            )
+
+    async def _clear_state(self, key: str) -> None:
+        assert self._pool
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM orchestrator_state WHERE key = $1", key
+            )
 
     async def _set_state(self, key: str, value: str) -> None:
         assert self._pool

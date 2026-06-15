@@ -5,6 +5,7 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ServerStorage = game:GetService("ServerStorage")
 
 local Config = require(ReplicatedStorage.Shared.Config)
 local MonsterAI = require(script.Parent.MonsterAI)
@@ -124,8 +125,21 @@ local function runRound()
 	local survivors = {}
 	for userId, isAlive in alive do
 		if isAlive then
-			currency[userId] = (currency[userId] or 0) + Config.SurvivalReward
+			local reward = Config.SurvivalReward
 			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				-- Bonuses from drop-in systems (absent → 1): retention
+				-- streaks and monetization multipliers
+				local streakMult = player:GetAttribute("StreakMultiplier")
+				if typeof(streakMult) == "number" then
+					reward = math.floor(reward * streakMult)
+				end
+				local monetizationMult = player:GetAttribute("MonetizationMultiplier")
+				if typeof(monetizationMult) == "number" then
+					reward = math.floor(reward * monetizationMult)
+				end
+			end
+			currency[userId] = (currency[userId] or 0) + reward
 			if player then
 				table.insert(survivors, player.Name)
 				save(player)
@@ -134,6 +148,30 @@ local function runRound()
 	end
 	broadcast({ Survivors = survivors })
 	task.wait(5)
+end
+
+-- Currency grant hook for drop-in systems (e.g. RetentionService daily
+-- rewards). Optional contract: systems fire (player, amount) server-side.
+local grantCurrency = Instance.new("BindableEvent")
+grantCurrency.Name = "GrantCurrency"
+grantCurrency.Parent = ServerStorage
+grantCurrency.Event:Connect(function(player: Player, amount: number)
+	if typeof(amount) == "number" and amount > 0 then
+		currency[player.UserId] = (currency[player.UserId] or 0) + amount
+	end
+end)
+
+-- Companion spend hook (e.g. MonetizationService shop purchases)
+local trySpendCurrency = Instance.new("BindableFunction")
+trySpendCurrency.Name = "TrySpendCurrency"
+trySpendCurrency.Parent = ServerStorage
+trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
+	local balance = currency[player.UserId]
+	if not balance or typeof(amount) ~= "number" or amount <= 0 or balance < amount then
+		return false
+	end
+	currency[player.UserId] = balance - amount
+	return true
 end
 
 Players.PlayerAdded:Connect(load)

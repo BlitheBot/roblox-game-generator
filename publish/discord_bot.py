@@ -2,10 +2,11 @@
 ApprovalBot (spec Section 12 + 16) — Discord bot that DMs the operator a
 publish preview and listens for decision commands in that DM:
 
-    !approve <game_id>   approve a pending publish
-    !skip <game_id>      reject a pending publish (build is discarded)
-    !resume <genre>          un-pause a genre account after moderation review
-    !resume-account <genre>  alias used by ban-handling alerts (spec 19)
+    !approve <game_id>              approve a pending publish
+    !skip <game_id>                 reject a pending publish (build is discarded)
+    !resume <genre>                 un-pause a genre account after moderation review
+    !resume-account <genre>         alias used by ban-handling alerts (spec 19)
+    !unsuppress <mechanic> <genre>  re-enable a FailureMemory-suppressed combo
 
 Requires DISCORD_BOT_TOKEN and DISCORD_OWNER_ID. When unset, the
 ApprovalGate falls back to webhook previews and decisions must be made
@@ -78,6 +79,8 @@ class ApprovalBot(discord.Client):
             await self._resume(message, content.removeprefix("!resume-account ").strip())
         elif content.startswith("!resume "):
             await self._resume(message, content.removeprefix("!resume ").strip())
+        elif content.startswith("!unsuppress "):
+            await self._unsuppress(message, content.removeprefix("!unsuppress ").strip())
 
     async def _decide(
         self, message: discord.Message, game_id_str: str, status: str
@@ -124,6 +127,27 @@ class ApprovalBot(discord.Client):
         else:
             await message.reply(f"▶️ Publishing resumed on genre account `{genre}`.")
             log.info("discord_bot.account_resumed", genre=genre)
+
+
+    async def _unsuppress(self, message: discord.Message, args: str) -> None:
+        """Improvement 6: re-enable a FailureMemory-suppressed combo."""
+        from monitor.failure_memory import FailureMemory
+
+        parts = args.split()
+        if len(parts) != 2:
+            await message.reply("Usage: `!unsuppress <mechanic> <genre>`")
+            return
+        mechanic, genre = parts
+        if await FailureMemory(self._pool).unsuppress(mechanic, genre):
+            await message.reply(
+                f"✅ Combo `{mechanic} / {genre}` re-enabled with a fresh "
+                f"3-strike counter. The scoring engine will consider it again."
+            )
+            log.info("discord_bot.combo_unsuppressed", mechanic=mechanic, genre=genre)
+        else:
+            await message.reply(
+                f"No suppressed combo found for `{mechanic} / {genre}`."
+            )
 
 
 def create_bot(pool: asyncpg.Pool) -> ApprovalBot | None:

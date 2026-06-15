@@ -67,6 +67,13 @@ class BuildPipeline:
         try:
             concept = await self._concept_gen.generate(self._pool, concept_id)
             concept = await self._resolver.resolve(concept)
+            # Cross-promotion: bake the account's current live games into
+            # the build so CrossPromoManager can raise billboards for them
+            from .cross_promotion import get_siblings
+
+            concept["cross_promo_siblings"] = await get_siblings(
+                self._pool, concept.get("target_genre_account") or "sim"
+            )
         except Exception as exc:
             await self._log_failure(concept_id, "concept_generation", str(exc), "deepseek", 0)
             await self._set_status(concept_id, "failed")

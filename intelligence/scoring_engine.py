@@ -17,6 +17,7 @@ from .meta_scout import Signal, MetaScoutResult
 from .trend_predictor import PreArrivalTrend, TrendPredictorResult
 from .mechanic_mapper import MappedSignal
 from .gap_analyzer import GapAnalysisResult
+from .seasonal_context import SEASONAL_BOOST, get_seasonal_context
 
 log = structlog.get_logger()
 
@@ -67,11 +68,17 @@ class ScoringEngine:
         mapped_signals: list[MappedSignal],
         gap_results: list[GapAnalysisResult],
         signal_weights: dict[str, float],
+        suppressed_combos: set[tuple[str, str]] | None = None,
     ) -> list[ScoredConcept]:
         """
         For each gap result, find best matching meta/trend signal and
-        compute weighted opportunity score.
+        compute weighted opportunity score. Combos in `suppressed_combos`
+        (FailureMemory, improvement 6) are hard-excluded regardless of
+        signal strength.
         """
+        season = get_seasonal_context()
+        suppressed = suppressed_combos or set()
+
         # Index meta signals and trend signals by mechanic_tag
         meta_by_tag: dict[str, list[Signal]] = {}
         for s in meta_result.signals:
@@ -84,6 +91,17 @@ class ScoringEngine:
         scored: list[ScoredConcept] = []
         for gap in gap_results:
             tag = gap.mechanic_tag
+
+            # FailureMemory hard-exclusion — this combo produced 3+ dead
+            # games; no signal strength overrides it
+            if (tag, gap.raw_genre) in suppressed:
+                log.info(
+                    "scoring_engine.combo_suppressed",
+                    mechanic=tag,
+                    genre=gap.raw_genre,
+                )
+                continue
+
             tag_weight = signal_weights.get(tag, 1.0)
 
             # Best matching meta signal for this mechanic
@@ -116,7 +134,18 @@ class ScoringEngine:
             )
 
             # Apply per-mechanic weight multiplier (FeedbackLoop adjustments)
-            opportunity_score = min(1.0, raw_score * tag_weight)
+            opportunity_score = raw_score * tag_weight
+
+            # Seasonal boost (15%) for concepts matching the active season
+            if season.matches_concept(tag, gap.raw_genre, gap.closest_existing_game):
+                opportunity_score *= SEASONAL_BOOST
+                log.debug(
+                    "scoring_engine.seasonal_boost",
+                    mechanic=tag,
+                    season=season.name,
+                )
+
+            opportunity_score = min(1.0, opportunity_score)
 
             scored.append(
                 ScoredConcept(

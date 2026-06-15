@@ -1,11 +1,14 @@
 """
-InRobloxMarketer (spec 5.2).
+InRobloxMarketer (spec 5.2, cadence updated by improvement 4).
 
 Phase 1 (launch): SEO description already set by publisher; queue an
 alternate thumbnail variant for a 48h A/B test, then keep the winner.
 
-Phase 2 (weekly): refresh description with latest MetaScout keywords;
-monthly, regenerate any thumbnail with CTR < 2%.
+Phase 2 (ongoing): refresh every live game's description every 48 hours
+regardless of performance status, using the latest MetaScout keywords
+(orchestrator_state.latest_meta_keywords) woven in by DeepSeek;
+monthly, regenerate any thumbnail with CTR < 2%. published_games.
+last_description_refresh tracks the cadence.
 """
 import json
 import pathlib
@@ -25,6 +28,7 @@ log = structlog.get_logger()
 
 AB_TEST_HOURS = 48
 MIN_CTR = 0.02
+DESCRIPTION_REFRESH_HOURS = 48
 
 
 class InRobloxMarketer:
@@ -110,7 +114,7 @@ class InRobloxMarketer:
     # ── Phase 2: ongoing ────────────────────────────────────
 
     async def refresh_descriptions(self, meta_keywords: list[str]) -> None:
-        """Weekly: rewrite each live game's description with fresh keywords."""
+        """Rewrite every live game's description with fresh keywords now."""
         async with self._pool.acquire() as conn:
             games = await conn.fetch(
                 """
@@ -118,10 +122,32 @@ class InRobloxMarketer:
                        cq.concept_json
                 FROM published_games pg
                 JOIN concept_queue cq ON cq.id = pg.concept_id
-                WHERE pg.status IN ('live', 'breakout')
+                WHERE pg.status IN ('live', 'breakout', 'flagged')
                 """
             )
         await self._refresh_rows(games, meta_keywords)
+
+    async def refresh_due_descriptions(self, meta_keywords: list[str]) -> int:
+        """Improvement 4: refresh every live game whose description is
+        older than 48h, regardless of performance status (live, breakout,
+        AND flagged). Returns the number of games refreshed."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=DESCRIPTION_REFRESH_HOURS)
+        async with self._pool.acquire() as conn:
+            games = await conn.fetch(
+                """
+                SELECT pg.id, pg.game_title, pg.genre_account, pg.universe_id,
+                       cq.concept_json
+                FROM published_games pg
+                JOIN concept_queue cq ON cq.id = pg.concept_id
+                WHERE pg.status IN ('live', 'breakout', 'flagged')
+                  AND (pg.last_description_refresh IS NULL
+                       OR pg.last_description_refresh < $1)
+                """,
+                cutoff,
+            )
+        if games:
+            await self._refresh_rows(games, meta_keywords)
+        return len(games)
 
     async def refresh_for_games(
         self, game_ids: list[str], meta_keywords: list[str]
@@ -156,6 +182,7 @@ class InRobloxMarketer:
                 await self._push_description(
                     game["genre_account"], game["universe_id"], description
                 )
+                await self._stamp_refreshed(game["id"])
                 log.info("marketer.description_refreshed", game=game["game_title"])
             except Exception as exc:
                 log.warning(
@@ -188,6 +215,13 @@ class InRobloxMarketer:
         return flagged
 
     # ── helpers ─────────────────────────────────────────────
+
+    async def _stamp_refreshed(self, game_id) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE published_games SET last_description_refresh = NOW() WHERE id = $1",
+                game_id,
+            )
 
     async def _write_refreshed_description(
         self, game_title: str, concept: dict, meta_keywords: list[str]

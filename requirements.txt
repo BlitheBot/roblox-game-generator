@@ -37,8 +37,16 @@ python-dateutil==2.9.0
 tenacity==8.3.0
 structlog==24.2.0
 
+# Fuzzy title matching against the top-50 name blacklist
+rapidfuzz==3.14.5
+
 # HTTP for sync calls (RapidAPI etc.)
 requests==2.32.3
 
 # YAML config (templates)
 PyYAML==6.0.1
+
+# Marketing video pipeline (improvement 7)
+moviepy==2.2.1
+gTTS==2.5.4
+numpy>=1.26

@@ -11,7 +11,13 @@
         "{{GAME_PASSES_LUA}}": "Lua table literal of game passes from monetization config",
         "{{SHOP_ITEMS_LUA}}": "Lua table literal of shop items from monetization config",
         "{{VIP_SERVER_ENABLED}}": "true|false from monetization config",
-        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids"
+        "{{TOOLBOX_ASSET_IDS_LUA}}": "Lua table literal of resolved toolbox asset ids",
+        "{{CROSS_PROMO_LUA}}": "Lua table literal of sibling games on this genre account: {title, universe_id, place_id}",
+        "{{RETENTION_REWARD_BOOST}}": "Numeric multiplier on milestone-streak daily rewards (LiveOps balance knob, default 1)",
+        "{{BASE_DROP_VALUE}}": "Numeric base currency per drop (LiveOps balance knob, default 1)",
+        "{{DROP_INTERVAL_SECONDS}}": "Numeric seconds between drops (LiveOps balance knob, default 2.0)",
+        "{{STARTING_CURRENCY}}": "Numeric starting currency (LiveOps balance knob, default 0)",
+        "{{MONETIZATION_LUA}}": "Lua table literal of the three-tier monetization config (shop items, tiers, product ids)"
     },
     "files": [
         "default.project.json",
@@ -25,6 +31,11 @@
         "src/server/ShopService.luau",
         "src/client/Main.client.luau",
         "src/client/HUD.luau",
-        "src/client/UpgradeUI.luau"
+        "src/client/UpgradeUI.luau",
+        "src/server/RetentionService.server.luau",
+        "src/client/RetentionUI.client.luau",
+        "src/server/CrossPromoManager.server.luau",
+        "src/server/MonetizationService.server.luau",
+        "src/client/MonetizationUI.client.luau"
     ]
 }

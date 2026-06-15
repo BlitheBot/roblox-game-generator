@@ -6,7 +6,9 @@ local Config = {
 	EggNoun = "{{EGG_NOUN}}",
 
 	-- Currency earned passively per second per equipped pet power
-	BaseIncomePerSecond = 1,
+	-- (numeric knobs are LiveOps-tunable via concept.balance)
+	BaseIncomePerSecond = {{BASE_INCOME_PER_SECOND}},
+	StartingCurrency = {{PET_STARTING_CURRENCY}},
 	MaxEquipped = 3,
 
 	-- Rarity table: weight = relative hatch chance, power = income multiplier
