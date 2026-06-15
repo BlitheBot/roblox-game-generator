@@ -21,6 +21,7 @@
         "default.project.json",
         "src/ServerScriptService/LightingService.server.luau",
         "src/ServerScriptService/MapBuilder.server.luau",
+        "src/ServerScriptService/DecorationService.server.luau",
         "src/shared/Config.luau",
         "src/server/Main.server.luau",
         "src/client/Main.client.luau",

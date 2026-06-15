@@ -21,6 +21,7 @@ from intelligence.llm_client import CLAUDE_FABLE, CLAUDE_SONNET
 from .asset_generator import AssetGenerator
 from .auto_validator import AutoValidator
 from .concept_generator import ConceptGenerator
+from .decoration_pass import DecorationPass
 from .luau_agent import LuauAgent
 from .rojo_builder import RojoBuilder
 from .toolbox_resolver import ToolboxAssetResolver
@@ -51,6 +52,7 @@ class BuildPipeline:
         self._luau_agent = LuauAgent()
         self._resolver = ToolboxAssetResolver()
         self._rojo = RojoBuilder()
+        self._decoration = DecorationPass()
         self._assets = AssetGenerator()
         self._validator = AutoValidator()
 
@@ -120,6 +122,9 @@ class BuildPipeline:
         build_dir = await self._luau_agent.generate(
             concept, game_id, model=model, error_context=error_context
         )
+        # Decoration pass runs after the map is generated, before the build,
+        # so scattered props ship inside the compiled .rbxl
+        await self._decoration.apply(concept, build_dir)
         rojo_result = await self._rojo.build(build_dir)
         validation = await self._validator.validate(build_dir, rojo_result)
 
