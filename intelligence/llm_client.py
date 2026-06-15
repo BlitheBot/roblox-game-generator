@@ -43,9 +43,9 @@ async def _record_spend(model: str, usage: dict) -> None:
 
 # Model IDs on OpenRouter (spec Section 8 defaults, env-overridable so a
 # provider deprecation never requires a code change)
-GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-flash-1.5")
+GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-2.5-flash")
 DEEPSEEK_V3    = os.environ.get("LLM_MODEL_REASONING", "deepseek/deepseek-chat")
-CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4-6")
+CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4.6")
 CLAUDE_FABLE   = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-fable-5")
 
 
