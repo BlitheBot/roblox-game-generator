@@ -239,18 +239,29 @@ class Orchestrator:
         await close_pool()
         log.info("orchestrator.stopped")
 
-    async def run_one_cycle(self) -> None:
+    async def run_one_cycle(self, force: bool = False) -> None:
         """Single end-to-end pass: intelligence → build → approval/publish
-        → monitor. Used by scripts/dry_run.py; call init() first."""
-        await self._run_intelligence_cycle()
+        → monitor. Used by scripts/dry_run.py and the !force command; call
+        init() first. force=True bypasses the !pause flag."""
+        await self._run_intelligence_cycle(force=force)
         await self._run_approval_processing()
         await self._run_monitor_cycle()
+
+    async def _is_paused(self) -> bool:
+        """True when an operator has issued !pause (orchestrator_state)."""
+        return (await self._get_state("paused")) == "true"
 
     # ─────────────────────────────────────────────────────────
     # Intelligence cycle
     # ─────────────────────────────────────────────────────────
 
-    async def _run_intelligence_cycle(self) -> None:
+    async def _run_intelligence_cycle(self, force: bool = False) -> None:
+        # FIX 7: honor the !pause flag. The build pipeline runs inside this
+        # cycle (via _dispatch_to_build), so this single guard pauses both
+        # scouting and building. force=True (the !force command) overrides.
+        if not force and await self._is_paused():
+            log.info("cycle.intelligence.paused_skip")
+            return
         log.info("cycle.intelligence.start")
         try:
             await self._intelligence_cycle_inner()
@@ -258,6 +269,11 @@ class Orchestrator:
             log.error("cycle.intelligence.crashed", traceback=traceback.format_exc())
             await self._discord_alert(
                 "Intelligence cycle crashed — check logs. System will retry on next scheduled run."
+            )
+        finally:
+            # Stamp completion for the !status command
+            await self._set_state(
+                "last_cycle_completed", datetime.now(timezone.utc).isoformat()
             )
 
     async def _intelligence_cycle_inner(self) -> None:
