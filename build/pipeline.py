@@ -20,6 +20,7 @@ import structlog
 from intelligence.llm_client import CLAUDE_FABLE, CLAUDE_SONNET
 
 from .asset_generator import AssetGenerator
+from .asset_verifier import AssetVerifier
 from .auto_validator import AutoValidator
 from .concept_generator import ConceptGenerator
 from .decoration_pass import DecorationPass
@@ -56,6 +57,7 @@ class BuildPipeline:
         self._concept_gen = ConceptGenerator()
         self._luau_agent = LuauAgent()
         self._resolver = ToolboxAssetResolver()
+        self._verifier = AssetVerifier()
         self._rojo = RojoBuilder()
         self._decoration = DecorationPass()
         self._assets = AssetGenerator()
@@ -79,6 +81,9 @@ class BuildPipeline:
         try:
             concept = await self._concept_gen.generate(self._pool, concept_id)
             concept = await self._resolver.resolve(concept)
+            # FIX 5: drop any resolved asset that is no longer free/available
+            # before it gets baked into Config (fails open on API errors)
+            concept = await self._verifier.verify_concept_assets(concept)
             # Cross-promotion: bake the account's current live games into
             # the build so CrossPromoManager can raise billboards for them
             from .cross_promotion import get_siblings

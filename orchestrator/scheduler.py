@@ -276,6 +276,17 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # FIX 5: weekly re-validation of toolbox_fallbacks.json — Sundays 04:30
+        self._scheduler.add_job(
+            self._run_asset_verification,
+            trigger=CronTrigger(day_of_week="sun", hour=4, minute=30),
+            id="asset_verification",
+            name="Weekly Toolbox Fallback Verification",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
         self._scheduler.start()
         log.info("orchestrator.started", cycle_hours=CYCLE_INTERVAL_HOURS)
 
@@ -731,6 +742,22 @@ class Orchestrator:
     # ─────────────────────────────────────────────────────────
     # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
     # ─────────────────────────────────────────────────────────
+
+    async def _run_asset_verification(self) -> None:
+        """FIX 5: re-validate the curated toolbox fallback ids weekly so dead
+        (now-private/paid) assets stop being handed to new builds."""
+        try:
+            from build.asset_verifier import AssetVerifier
+
+            removed = await AssetVerifier().refresh_fallbacks()
+            log.info("cycle.asset_verification.complete", removed=removed)
+            if removed:
+                await self._discord_alert(
+                    f"Toolbox fallback list refreshed — {removed} asset(s) no "
+                    f"longer free/available were removed."
+                )
+        except Exception:
+            log.error("cycle.asset_verification_failed", traceback=traceback.format_exc())
 
     async def _run_metrics_cleanup(self) -> None:
         """FIX 6: delete game_metrics rows older than the retention window to
