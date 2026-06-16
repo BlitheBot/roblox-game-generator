@@ -6,6 +6,7 @@
 local Workspace = game:GetService("Workspace")
 local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 
 local FLOOR_X, FLOOR_Z = 400, 300
 local WALL_HEIGHT = 35
@@ -64,16 +65,20 @@ for x = -halfX + 40, halfX - 40, 70 do
 	end
 end
 
--- Flicker loop: randomly toggle a subset of lights forever
-task.spawn(function()
-	while true do
-		local entry = flickerLights[math.random(#flickerLights)]
-		if entry then
-			local on = math.random() > 0.4
-			entry.light.Enabled = on
-			entry.fixture.Material = on and Enum.Material.Neon or Enum.Material.Slate
-		end
-		task.wait(math.random(2, 9) / 10)
+-- Flicker: randomly toggle a subset of lights every 2-8s. Driven by a
+-- Heartbeat accumulator (no while-true loop) so it stays frame-budget cheap.
+local nextFlicker = 0
+RunService.Heartbeat:Connect(function()
+	local now = os.clock()
+	if now < nextFlicker then
+		return
+	end
+	nextFlicker = now + math.random(2, 8)
+	local entry = flickerLights[math.random(#flickerLights)]
+	if entry then
+		local on = math.random() > 0.4
+		entry.light.Enabled = on
+		entry.fixture.Material = on and Enum.Material.Neon or Enum.Material.Slate
 	end
 end)
 
