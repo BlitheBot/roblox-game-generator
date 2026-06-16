@@ -27,6 +27,11 @@ _call_times: list[float] = []
 _throttle_lock = asyncio.Lock()
 _paused_until = 0.0
 
+# FIX 6: cap simultaneous in-flight OpenRouter calls to bound peak memory on
+# the 1GB VPS (separate from the per-minute rate limit above).
+_MAX_CONCURRENT_CALLS = 2
+_concurrency = asyncio.Semaphore(_MAX_CONCURRENT_CALLS)
+
 
 def _trip_429_pause() -> None:
     global _paused_until
@@ -125,29 +130,31 @@ async def chat(
     # Respect the global rate limit / 429 cooldown before every call
     await _throttle()
 
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{OPENROUTER_BASE}/chat/completions",
-            headers=_headers(),
-            json=body,
-        )
-        if resp.status_code == 429:
-            # Pause every caller for 60s, then let tenacity retry this one
-            _trip_429_pause()
-            log.warning("llm.rate_limited_429", model=model)
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        usage = data.get("usage", {})
-        log.debug(
-            "llm.call",
-            model=model,
-            prompt_tokens=usage.get("prompt_tokens"),
-            completion_tokens=usage.get("completion_tokens"),
-            cost_usd=usage.get("cost"),
-        )
-        await _record_spend(model, usage)
-        return content
+    # Cap concurrent in-flight requests (memory bound on the 1GB VPS)
+    async with _concurrency:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{OPENROUTER_BASE}/chat/completions",
+                headers=_headers(),
+                json=body,
+            )
+            if resp.status_code == 429:
+                # Pause every caller for 60s, then let tenacity retry this one
+                _trip_429_pause()
+                log.warning("llm.rate_limited_429", model=model)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            usage = data.get("usage", {})
+            log.debug(
+                "llm.call",
+                model=model,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                cost_usd=usage.get("cost"),
+            )
+            await _record_spend(model, usage)
+            return content
 
 
 async def chat_json(

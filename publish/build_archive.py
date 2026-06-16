@@ -52,6 +52,25 @@ def archive_build(build_dir: pathlib.Path, genre: str) -> pathlib.Path | None:
     return target
 
 
+def prune_active_builds(keep: int = 2) -> None:
+    """FIX 6: keep at most `keep` directories in builds/active so abandoned/
+    failed builds don't accumulate on the low-RAM/disk VPS."""
+    active = _builds_root() / "active"
+    if not active.exists():
+        return
+    try:
+        entries = sorted(
+            (p for p in active.iterdir() if p.is_dir()),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        for old in entries[keep:]:
+            shutil.rmtree(old, ignore_errors=True)
+            log.info("build_archive.active_pruned", build=old.name)
+    except Exception as exc:
+        log.warning("build_archive.active_prune_failed", error=str(exc))
+
+
 def discard_build(build_dir: pathlib.Path) -> None:
     """Delete a skipped/rejected build directory."""
     try:

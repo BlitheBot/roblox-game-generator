@@ -4,6 +4,7 @@ Runs the full intelligence → build → publish → monitor cycle every 6 hours
 Handles crash recovery, supervised mode, and Discord alerts.
 """
 import asyncio
+import gc
 import json
 import os
 import pathlib
@@ -34,7 +35,38 @@ from publish.open_cloud_publisher import OpenCloudPublisher
 log = structlog.get_logger()
 
 CYCLE_INTERVAL_HOURS   = 6
-MONITOR_INTERVAL_HOURS = 1
+# FIX 6: poll metrics every 2h instead of hourly to cut DB load on the VPS
+MONITOR_INTERVAL_HOURS = 2
+
+# FIX 6: memory guards for the 1GB VPS (Linux /proc; no-op elsewhere)
+MIN_FREE_RAM_MB = 200    # below this, skip starting a build
+MAX_PROCESS_RSS_MB = 800  # above this, back off before the next cycle
+MEM_BACKOFF_SECONDS = 300
+METRICS_RETENTION_DAYS = 90
+
+
+def _proc_meminfo_available_mb() -> float | None:
+    """System MemAvailable in MB (Linux only); None when unavailable."""
+    try:
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError):
+        return None
+    return None
+
+
+def _process_rss_mb() -> float | None:
+    """This process's resident memory in MB (Linux only); None otherwise."""
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError):
+        return None
+    return None
 
 
 class Orchestrator:
@@ -233,6 +265,17 @@ class Orchestrator:
             replace_existing=True,
         )
 
+        # FIX 6: prune game_metrics older than 90 days — daily at 05:00
+        self._scheduler.add_job(
+            self._run_metrics_cleanup,
+            trigger=CronTrigger(hour=5, minute=0),
+            id="metrics_cleanup",
+            name="Game Metrics Retention Cleanup",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
         self._scheduler.start()
         log.info("orchestrator.started", cycle_hours=CYCLE_INTERVAL_HOURS)
 
@@ -272,6 +315,12 @@ class Orchestrator:
         if not force and await self._is_paused():
             log.info("cycle.intelligence.paused_skip")
             return
+        # FIX 6: if this process is already using a lot of RAM, back off before
+        # starting more work (Linux-only; no-op where /proc is unavailable).
+        rss = _process_rss_mb()
+        if rss is not None and rss > MAX_PROCESS_RSS_MB:
+            log.warning("cycle.memory_high_backoff", rss_mb=round(rss))
+            await asyncio.sleep(MEM_BACKOFF_SECONDS)
         log.info("cycle.intelligence.start")
         try:
             await self._intelligence_cycle_inner()
@@ -285,6 +334,8 @@ class Orchestrator:
             await self._set_state(
                 "last_cycle_completed", datetime.now(timezone.utc).isoformat()
             )
+            # FIX 6: reclaim memory between cycles on the low-RAM VPS
+            gc.collect()
 
     async def _intelligence_cycle_inner(self) -> None:
         assert self._pool and self._meta_scout and self._trend_pred
@@ -381,8 +432,24 @@ class Orchestrator:
             score=concept.opportunity_score,
         )
         from build.pipeline import BuildPipeline
+        from publish.build_archive import prune_active_builds
 
         assert self._pool
+        # FIX 6: cap the active build dir and refuse to start a build when the
+        # box is nearly out of RAM (it will retry next cycle).
+        prune_active_builds(keep=2)
+        avail = _proc_meminfo_available_mb()
+        if avail is not None and avail < MIN_FREE_RAM_MB:
+            log.warning(
+                "cycle.low_ram_skip_build",
+                avail_mb=round(avail),
+                concept_id=concept.concept_id,
+            )
+            await self._discord_alert(
+                f"Low RAM ({avail:.0f}MB free) — skipping build for concept "
+                f"{concept.concept_id}; it will retry next cycle."
+            )
+            return
         pipeline = BuildPipeline(self._pool)
         output = await pipeline.run(
             concept.concept_id, meta_keywords=await self._get_meta_keywords()
@@ -410,6 +477,8 @@ class Orchestrator:
         # Process immediately so autonomous publishes don't wait for the
         # 5-minute job; pending (supervised) rows are untouched.
         await self._run_approval_processing()
+        # FIX 6: reclaim the build's memory before the next concept
+        gc.collect()
 
     async def _run_approval_processing(self) -> None:
         assert self._approval_gate and self._publisher and self._marketer
@@ -662,6 +731,20 @@ class Orchestrator:
     # ─────────────────────────────────────────────────────────
     # Monthly thumbnail CTR refresh (spec 5.2 phase 2)
     # ─────────────────────────────────────────────────────────
+
+    async def _run_metrics_cleanup(self) -> None:
+        """FIX 6: delete game_metrics rows older than the retention window to
+        keep the table (and DB working set) small on the VPS."""
+        assert self._pool
+        try:
+            async with self._pool.acquire() as conn:
+                result = await conn.execute(
+                    "DELETE FROM game_metrics WHERE timestamp < NOW() - "
+                    f"make_interval(days => {METRICS_RETENTION_DAYS})"
+                )
+            log.info("cycle.metrics_cleanup.complete", result=result)
+        except Exception:
+            log.error("cycle.metrics_cleanup_failed", traceback=traceback.format_exc())
 
     async def _run_thumbnail_refresh(self) -> None:
         assert self._marketer
