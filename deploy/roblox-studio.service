@@ -12,6 +12,13 @@ After=network-online.target postgresql.service
 Wants=network-online.target
 Requires=postgresql.service
 
+# Anti-flap: give up after 5 failed starts within 600s. These directives MUST
+# live in [Unit] on systemd >= 230 (Ubuntu 22.04 ships 249); in [Service] they
+# are parsed as an unknown key and silently ignored, so the service would
+# restart forever on a persistent crash (dead DB, bad env).
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
 [Service]
 Type=simple
 User=studio
@@ -22,6 +29,9 @@ WorkingDirectory=/home/studio/roblox-game-generator
 EnvironmentFile=-/home/studio/roblox-game-generator/.env
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONUTF8=1
+# `python -m` already prepends WorkingDirectory to sys.path; set this
+# explicitly so package imports resolve no matter how ExecStart changes.
+Environment=PYTHONPATH=/home/studio/roblox-game-generator
 ExecStart=/home/studio/roblox-game-generator/.venv/bin/python -m orchestrator.scheduler
 
 # The orchestrator owns long-running scheduled jobs — give it time to
@@ -31,9 +41,6 @@ KillSignal=SIGINT
 
 Restart=always
 RestartSec=30
-# Don't flap forever on a persistent crash (bad env, dead DB)
-StartLimitIntervalSec=600
-StartLimitBurst=5
 
 # Hardening
 NoNewPrivileges=true

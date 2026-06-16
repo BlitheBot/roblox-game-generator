@@ -11,6 +11,7 @@ import praw
 import structlog
 from bs4 import BeautifulSoup
 
+from . import youtube
 from .llm_client import GEMINI_FLASH, chat_json
 from .roblox_games import fetch_top_games
 
@@ -26,6 +27,9 @@ class Signal:
     signal_strength: float
     source: str
     sustained_ccu_indicator: bool
+    # Spec 15: country where the trend predominantly originates; non-English
+    # markets (ES, PT, DE, FR, PH) flag the game for localization downstream
+    platform_origin_country: str = "US"
 
 
 @dataclass
@@ -127,16 +131,32 @@ class MetaScout:
 
     async def _fetch_youtube_recent(self) -> list[dict]:
         """
-        Recent YouTube videos tagged 'roblox' in last 72h.
-        Uses simple httpx scrape of search page if no API key set;
-        falls back gracefully.
-        # TODO: integrate YouTube Data API v3 with YOUTUBE_API_KEY if available
+        YouTube videos tagged 'roblox' uploaded in the last 72 hours,
+        sorted by upload date (spec 3.1). The Data API's publishedAfter
+        gives the exact 72h window; without YOUTUBE_API_KEY (or on API
+        failure) we scrape with the closest native filter (this week).
         """
+        if youtube.api_key():
+            try:
+                videos = await youtube.search_recent("roblox", hours=72, max_results=20)
+                return [
+                    {"title": v["title"], "published_at": v["published_at"]}
+                    for v in videos
+                ]
+            except Exception as exc:
+                # httpx errors embed the request URL (incl. the API key) —
+                # redact before logging
+                log.warning(
+                    "meta_scout.youtube_api_failed",
+                    error=youtube.redact_key(str(exc)),
+                )
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 params = {
                     "search_query": "roblox new game 2025",
-                    "sp": "EgIIAw%3D%3D",  # filter: last hour — approximate
+                    # 'this week' upload filter — youtube.com has no 72h
+                    # option; exact 72h needs YOUTUBE_API_KEY above
+                    "sp": "EgIIAw%3D%3D",
                 }
                 resp = await client.get(
                     "https://www.youtube.com/results",
@@ -172,8 +192,12 @@ class MetaScout:
                     "signal strength (0.0–1.0), and whether it shows sustained CCU. "
                     "Valid mechanic_tags: idle_tycoon, pet_collect, survival_horror, "
                     "obby, rpg_dungeon, incremental_sim. "
+                    "Also tag each signal with platform_origin_country — the ISO 3166 "
+                    "country code where the trend predominantly originates (e.g. US, ES, "
+                    "PT, DE, FR, PH); use US when unclear. "
                     "Return JSON with key 'signals' containing an array of objects each with: "
-                    "genre, mechanic_tag, signal_strength, source, sustained_ccu_indicator."
+                    "genre, mechanic_tag, signal_strength, source, sustained_ccu_indicator, "
+                    "platform_origin_country."
                 ),
             },
             {
@@ -192,6 +216,9 @@ class MetaScout:
                         signal_strength=float(s["signal_strength"]),
                         source=s["source"],
                         sustained_ccu_indicator=bool(s.get("sustained_ccu_indicator", False)),
+                        platform_origin_country=str(
+                            s.get("platform_origin_country") or "US"
+                        ).upper(),
                     )
                 )
             except (KeyError, TypeError, ValueError) as exc:

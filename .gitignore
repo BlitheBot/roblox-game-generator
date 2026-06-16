@@ -11,7 +11,8 @@ build/__pycache__/
 /builds/
 builds/
 
-# Runtime-generated files (regenerated on the VPS) — keep out of git so
-# `git pull` never conflicts with locally refreshed copies
+# Runtime-regenerated data (refreshed on a 24h cycle + lazily on read) —
+# tracking it makes every `git pull` on a live host conflict with the
+# locally-updated copy. See intelligence/name_blacklist.py.
 data/name_blacklist.json
 rokit.toml

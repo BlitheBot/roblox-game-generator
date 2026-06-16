@@ -5,7 +5,7 @@ ConceptGenerator → LuauAgent → ToolboxAssetResolver → RojoBuilder
 → AssetGenerator → AutoValidator
 
 Retry policy (spec 4.6): up to 3 attempts with Claude Sonnet (error
-context appended each retry), then escalate to Claude Fable and restart
+context appended each retry), then escalate to Claude Opus and restart
 from LuauAgent. All failures logged to build_failures.
 """
 import asyncio
@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 import asyncpg
 import structlog
 
-from intelligence.llm_client import CLAUDE_FABLE, CLAUDE_SONNET
+from intelligence.llm_client import CLAUDE_OPUS, CLAUDE_SONNET
 
 from .asset_generator import AssetGenerator
 from .asset_verifier import AssetVerifier
@@ -31,7 +31,7 @@ from .toolbox_resolver import ToolboxAssetResolver
 log = structlog.get_logger()
 
 RETRIES_PER_MODEL = 3
-MODEL_LADDER = [CLAUDE_SONNET, CLAUDE_FABLE]
+MODEL_LADDER = [CLAUDE_SONNET, CLAUDE_OPUS]
 
 # FIX 7: only one full build pipeline may run at a time (memory + OpenRouter
 # rate-limit safety). Concurrent run() calls queue on this process-wide lock.

@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS marketing_publishes (
     error_message TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_marketing_publishes_game ON marketing_publishes (game_id);
+-- Guarded so a re-run against a table owned by another role skips cleanly
+-- instead of tripping CREATE INDEX's ownership check (see 001 header note).
+DO $$ BEGIN
+    IF to_regclass('public.idx_marketing_publishes_game') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_marketing_publishes_game ON marketing_publishes (game_id)';
+    END IF;
+END $$;
 
 COMMIT;

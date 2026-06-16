@@ -12,6 +12,12 @@ CREATE TABLE IF NOT EXISTS llm_spend (
     cost_usd          FLOAT NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_llm_spend_time ON llm_spend (timestamp DESC);
+-- Guarded so a re-run against a table owned by another role skips cleanly
+-- instead of tripping CREATE INDEX's ownership check (see 001 header note).
+DO $$ BEGIN
+    IF to_regclass('public.idx_llm_spend_time') IS NULL THEN
+        EXECUTE 'CREATE INDEX idx_llm_spend_time ON llm_spend (timestamp DESC)';
+    END IF;
+END $$;
 
 COMMIT;

@@ -86,10 +86,13 @@ async def _record_spend(model: str, usage: dict) -> None:
 
 # Model IDs on OpenRouter (spec Section 8 defaults, env-overridable so a
 # provider deprecation never requires a code change)
-GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-flash-1.5")
+GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-2.5-flash")
 DEEPSEEK_V3    = os.environ.get("LLM_MODEL_REASONING", "deepseek/deepseek-chat")
-CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4-6")
-CLAUDE_FABLE   = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-fable-5")
+CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4.6")
+# Code-gen escalation tier. NOTE: anthropic/claude-fable-5 is listed in
+# OpenRouter's /models but is gated ("Fable Mythos access") and 404s on
+# call — escalate to Opus, which is both available and more capable.
+CLAUDE_OPUS    = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-opus-4.8")
 
 
 def _headers() -> dict[str, str]:
@@ -102,7 +105,8 @@ def _headers() -> dict[str, str]:
 
 
 # Backoff delays of ~5s, 10s, 20s between the 4 attempts (FIX 7), and
-# reraise the underlying error so callers see the real cause, not RetryError.
+# reraise the underlying error so callers (and build_failures) see the real
+# HTTPStatusError with its status/body, not an opaque RetryError wrapper.
 @retry(
     stop=stop_after_attempt(4),
     wait=wait_exponential(multiplier=5, min=5, max=20),

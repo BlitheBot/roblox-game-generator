@@ -6,7 +6,7 @@ publish preview and listens for decision + ops commands in that DM:
     !skip <game_id>                 reject a pending publish (build discarded)
     !retry <game_id>                re-trigger a stuck approved publish
     !resume <genre>                 un-pause a genre account after review
-    !resume-account <genre>         alias of !resume <genre>
+    !resume-account <genre>         alias of !resume <genre> (ban-handling, spec 19)
     !resume                         resume the orchestrator (after !pause)
     !pause                          pause the orchestrator after this cycle
     !force                          run one scout/build cycle immediately

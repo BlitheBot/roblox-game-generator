@@ -46,6 +46,7 @@ class ScoredConcept:
     sustained_ccu: bool
     differentiation_score: float  # 1 - similarity_score
     gap_result: GapAnalysisResult
+    platform_origin_country: str = "US"  # spec 15 localization signal
     concept_json: dict = field(default_factory=dict)
 
 
@@ -109,9 +110,11 @@ class ScoringEngine:
                 best_meta = max(meta_signals_for_tag, key=lambda s: s.signal_strength)
                 signal_strength = best_meta.signal_strength
                 sustained_ccu   = best_meta.sustained_ccu_indicator
+                origin_country  = best_meta.platform_origin_country
             else:
                 signal_strength = 0.3  # weak default if no match
                 sustained_ccu   = False
+                origin_country  = "US"
 
             # Best matching trend for this mechanic
             trend_signals_for_tag = trend_by_tag.get(tag, [])
@@ -155,6 +158,7 @@ class ScoringEngine:
                     sustained_ccu=sustained_ccu,
                     differentiation_score=differentiation_score,
                     gap_result=gap,
+                    platform_origin_country=origin_country,
                 )
             )
 
@@ -189,13 +193,17 @@ class ViabilityGate:
         passing = [c for c in scored if c.opportunity_score >= threshold]
         rejected = [c for c in scored if c.opportunity_score < threshold]
 
-        if not passing and scored:
-            # Force-pass the best concept regardless of score
-            passing = [scored[0]]
-            rejected = scored[1:]
+        # Spec 20: only the fallback cycle (4th consecutive rejection) may
+        # force-pass the best concept regardless of score. On normal cycles
+        # an empty passing list is the correct outcome — it increments the
+        # consecutive-reject counter that arms the fallback.
+        if fallback_triggered and not passing and scored:
+            best = max(scored, key=lambda c: c.opportunity_score)
+            passing = [best]
+            rejected = [c for c in scored if c is not best]
             log.warning(
                 "viability_gate.forced_best_concept",
-                score=scored[0].opportunity_score,
+                score=best.opportunity_score,
             )
 
         for concept in passing:
@@ -226,6 +234,7 @@ class ViabilityGate:
             "differentiation_score": concept.differentiation_score,
             "closest_existing_game": concept.gap_result.closest_existing_game,
             "differentiation_suggestions": concept.gap_result.differentiation_suggestions,
+            "platform_origin_country": concept.platform_origin_country,
         }
         async with self._pool.acquire() as conn:
             await conn.execute(
@@ -286,15 +295,25 @@ class FeedbackLoop:
         - Cap: ±40% from baseline (0.6–1.4 range)
         """
         async with pool.acquire() as conn:
-            # Boost mechanics from high-performing games
+            # Boost mechanics from games that hit CCU > 50 within 7 days of
+            # publish. Each game adjusts its mechanic's weight exactly once
+            # (tracked in orchestrator_state) — otherwise the hourly monitor
+            # cycle would re-compound +10% until the cap every hour.
             boostable = await conn.fetch(
                 """
-                SELECT DISTINCT c.mechanic_tag
+                SELECT pg.id, c.mechanic_tag
                 FROM published_games pg
                 JOIN concept_queue c ON c.id = pg.concept_id
-                JOIN game_metrics gm ON gm.game_id = pg.id
-                WHERE gm.ccu > 50
-                  AND gm.timestamp >= NOW() - INTERVAL '7 days'
+                WHERE EXISTS (
+                      SELECT 1 FROM game_metrics gm
+                      WHERE gm.game_id = pg.id
+                        AND gm.ccu > 50
+                        AND gm.timestamp <= pg.published_at + INTERVAL '7 days'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM orchestrator_state os
+                      WHERE os.key = 'weight_boosted:' || pg.id::text
+                  )
                 """
             )
             for row in boostable:
@@ -308,18 +327,32 @@ class FeedbackLoop:
                     """,
                     tag,
                 )
-                log.info("feedback_loop.boosted", mechanic=tag)
+                await conn.execute(
+                    """
+                    INSERT INTO orchestrator_state (key, value, updated_at)
+                    VALUES ('weight_boosted:' || $1, $2, NOW())
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    str(row["id"]),
+                    tag,
+                )
+                log.info("feedback_loop.boosted", mechanic=tag, game_id=str(row["id"]))
 
-            # Reduce mechanics from underperforming games
+            # Reduce mechanics from games that never exceeded CCU 5 in their
+            # first 14 days — also once per game.
             reduceable = await conn.fetch(
                 """
-                SELECT DISTINCT c.mechanic_tag
+                SELECT pg.id, c.mechanic_tag
                 FROM published_games pg
                 JOIN concept_queue c ON c.id = pg.concept_id
                 WHERE pg.published_at <= NOW() - INTERVAL '14 days'
                   AND NOT EXISTS (
                       SELECT 1 FROM game_metrics gm
                       WHERE gm.game_id = pg.id AND gm.ccu > 5
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1 FROM orchestrator_state os
+                      WHERE os.key = 'weight_reduced:' || pg.id::text
                   )
                 """
             )
@@ -334,4 +367,13 @@ class FeedbackLoop:
                     """,
                     tag,
                 )
-                log.info("feedback_loop.reduced", mechanic=tag)
+                await conn.execute(
+                    """
+                    INSERT INTO orchestrator_state (key, value, updated_at)
+                    VALUES ('weight_reduced:' || $1, $2, NOW())
+                    ON CONFLICT (key) DO NOTHING
+                    """,
+                    str(row["id"]),
+                    tag,
+                )
+                log.info("feedback_loop.reduced", mechanic=tag, game_id=str(row["id"]))

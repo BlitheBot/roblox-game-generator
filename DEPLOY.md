@@ -53,6 +53,12 @@ sudo -u postgres psql -c "CREATE USER studio WITH PASSWORD 'CHANGE_ME';"
 sudo -u postgres createdb -O studio roblox_studio
 ```
 
+The `-O studio` is required: the service role must **own** the database so the
+auto-migrations (which `CREATE INDEX` and `ALTER TABLE`) succeed. If the schema
+was instead created by the `postgres` superuser, the service role won't own
+those tables and migrations fail with `must be owner of table …` — recover by
+running `scripts/setup_db.sql` once as superuser (see Troubleshooting).
+
 Migrations run automatically at every service start — no manual schema step.
 
 ## 5. Application
@@ -209,3 +215,4 @@ sudo systemctl restart roblox-studio
 | Publishes deferred | 4h per-account cooldown (spec 5.1) or genre account paused — `!resume <genre>` after review |
 | Publish fails with `no free place` | Place pool exhausted — create a new place on that account and append its id to `ROBLOX_PLACE_IDS_*` |
 | Model errors on every LLM call | OpenRouter may have delisted a model — override via `LLM_MODEL_*` / `IMAGE_MODEL` in `.env` |
+| `must be owner of table …` on startup/dry run | Schema was created by a different role than the one in `DATABASE_URL`. Hand ownership to the app role once as superuser: `sudo -u postgres psql -d roblox_studio -v app_role=studio -f scripts/setup_db.sql` |
