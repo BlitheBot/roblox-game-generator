@@ -348,11 +348,10 @@ class Orchestrator:
         log.info("cycle.intelligence.start")
         try:
             await self._intelligence_cycle_inner()
-        except Exception:
-            log.error("cycle.intelligence.crashed", traceback=traceback.format_exc())
-            await self._discord_alert(
-                "Intelligence cycle crashed — check logs. System will retry on next scheduled run."
-            )
+        except Exception as exc:
+            # Bug 3: full traceback to build_failures + one detailed alert,
+            # then continue — a crashed cycle must never kill the service.
+            await self._log_job_crash("intelligence_cycle", exc)
         finally:
             # Stamp completion for the !status command
             await self._set_state(
@@ -440,12 +439,10 @@ class Orchestrator:
         for concept in gate_result.passing:
             try:
                 await self._dispatch_to_build(concept)
-            except Exception:
-                log.error(
-                    "cycle.build_dispatch_crashed",
-                    concept_id=concept.concept_id,
-                    traceback=traceback.format_exc(),
-                )
+            except Exception as exc:
+                # Bug 3: one concept's build crash must not abort the rest of
+                # this cycle — log the traceback + alert and keep going.
+                await self._log_job_crash("build_pipeline_cycle", exc)
 
     async def _dispatch_to_build(self, concept) -> None:
         """Hand off a passing concept to the Build Pipeline (L2)."""
@@ -512,8 +509,8 @@ class Orchestrator:
         assert self._approval_gate and self._publisher and self._marketer
         try:
             await self._approval_gate.process_decisions(self._publisher, self._marketer)
-        except Exception:
-            log.error("cycle.approval_processing_failed", traceback=traceback.format_exc())
+        except Exception as exc:
+            await self._log_job_crash("approval_processing", exc)
 
     async def _run_pool_check(self) -> None:
         """Bug 2: detect place-pool recovery and warn before exhaustion."""
@@ -521,14 +518,23 @@ class Orchestrator:
         try:
             await self._approval_gate.check_pool_recovery()
             await self._approval_gate.proactive_pool_check()
-        except Exception:
-            log.error("cycle.pool_check_failed", traceback=traceback.format_exc())
+        except Exception as exc:
+            await self._log_job_crash("pool_check", exc)
 
     # ─────────────────────────────────────────────────────────
     # Monitor cycle
     # ─────────────────────────────────────────────────────────
 
     async def _run_monitor_cycle(self) -> None:
+        """Hourly monitor cycle with Bug 3 crash recovery: each step is already
+        isolated; this outer guard catches anything else (e.g. setup errors),
+        logs the traceback to build_failures, and alerts once."""
+        try:
+            await self._monitor_cycle_inner()
+        except Exception as exc:
+            await self._log_job_crash("monitor_cycle", exc)
+
+    async def _monitor_cycle_inner(self) -> None:
         """
         Hourly: poll metrics, detect breakouts/moderation, settle A/B tests,
         adjust signal weights, run big-decision threshold checks.
@@ -715,11 +721,8 @@ class Orchestrator:
 
             pipeline = LiveOpsPipeline(self._pool, self._publisher, self._reporter)
             await pipeline.run_weekly_cycle(await self._get_meta_keywords())
-        except Exception:
-            log.error("cycle.liveops_failed", traceback=traceback.format_exc())
-            await self._discord_alert(
-                "Weekly LiveOps cycle crashed — check logs. Will retry next Monday."
-            )
+        except Exception as exc:
+            await self._log_job_crash("liveops_weekly", exc)
 
     async def _run_seasonal_reverts(self) -> None:
         assert self._pool
@@ -732,8 +735,8 @@ class Orchestrator:
                     f"🔄 Seasonal reskin reverted: **{title}** — original title, "
                     f"description, and thumbnail restored."
                 )
-        except Exception:
-            log.error("cycle.seasonal_revert_failed", traceback=traceback.format_exc())
+        except Exception as exc:
+            await self._log_job_crash("seasonal_reverts", exc)
 
     # ─────────────────────────────────────────────────────────
     # 48h description refresh (improvement 4)
@@ -886,6 +889,46 @@ class Orchestrator:
             await self._reporter.alert(message)
         else:
             log.warning("orchestrator.alert_before_start", message=message)
+
+    async def _log_job_crash(self, stage: str, exc: Exception) -> None:
+        """Bug 3: shared crash recovery for every scheduled job. Records the
+        full traceback to build_failures, sends ONE Discord alert with the real
+        error, and returns so the crashed job never takes down the service.
+        Callers must let asyncio.CancelledError propagate (it is a
+        BaseException, so a bare `except Exception` already passes it through)."""
+        full_error = traceback.format_exc()
+        try:
+            assert self._pool
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO build_failures
+                        (id, concept_id, timestamp, stage, error_message,
+                         model_used, retry_count)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    uuid.uuid4(),
+                    None,
+                    datetime.now(timezone.utc),
+                    f"{stage}_crash",
+                    full_error[:4000],
+                    "system",
+                    0,
+                )
+        except Exception:
+            log.error(
+                "orchestrator.crash_log_failed",
+                stage=stage,
+                traceback=traceback.format_exc(),
+            )
+        await self._discord_alert(
+            f"🚨 {stage} crashed at "
+            f"{datetime.now(timezone.utc).strftime('%H:%M UTC')}\n"
+            f"Error: {str(exc)[:500]}\n"
+            f"Full traceback in the build_failures table.\n"
+            f"System will retry on the next scheduled run."
+        )
+        log.error(f"cycle.{stage}.crashed", error=str(exc), traceback=full_error)
 
 
 async def main() -> None:
