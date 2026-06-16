@@ -39,6 +39,7 @@
         "src/server/ShopService.luau",
         "src/client/Main.client.luau",
         "src/client/UIPolish.client.luau",
+        "src/client/NewPlayerExperience.client.luau",
         "src/client/HUD.luau",
         "src/client/UpgradeUI.luau",
         "src/server/RetentionService.server.luau",

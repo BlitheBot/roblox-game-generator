@@ -31,6 +31,7 @@
         "src/server/Main.server.luau",
         "src/client/Main.client.luau",
         "src/client/UIPolish.client.luau",
+        "src/client/NewPlayerExperience.client.luau",
         "src/server/RetentionService.server.luau",
         "src/client/RetentionUI.client.luau",
         "src/server/CrossPromoManager.server.luau",
