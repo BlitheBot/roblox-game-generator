@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 
 import structlog
 
+from util.tos import BLOCKED_TERMS, scan_for_blocked_term  # noqa: F401 (re-exported)
+
 from .rojo_builder import RojoBuildResult
 
 log = structlog.get_logger()
@@ -28,27 +30,9 @@ MAX_SCRIPT_BYTES = 200 * 1024
 _RANGE_RE = re.compile(r"\.Range\s*=\s*(\d+)")
 _RATE_RE = re.compile(r"\.Rate\s*=\s*(\d+)")
 
-# TOS keyword scan — weapons-realism, slurs/hate placeholders, adult content,
-# and scam-bait terms. Kept conservative; matched case-insensitively on word
-# boundaries against all Luau source + concept text.
-BLOCKED_TERMS = [
-    # weapons realism
-    "glock", "ar-15", "ak-47", "uzi", "9mm", "shotgun shell",
-    # adult content
-    "sex", "nude", "naked", "porn", "nsfw", "strip club", "condo game",
-    # violence/gore
-    "gore", "beheading", "dismember", "suicide", "self harm",
-    # drugs
-    "cocaine", "heroin", "meth", "weed", "marijuana",
-    # gambling/scam-bait
-    "casino", "gambling", "free robux", "robux generator",
-    # hate
-    "nazi", "kkk", "slur",
-]
-
-_BLOCKED_RE = re.compile(
-    r"\b(" + "|".join(re.escape(t) for t in BLOCKED_TERMS) + r")\b", re.IGNORECASE
-)
+# TOS keyword scan — the canonical blocked-terms list lives in util.tos
+# (shared with the concept generator and viability gate, Bug 1). BLOCKED_TERMS
+# is re-exported above for callers that still reference it here.
 
 
 @dataclass
@@ -56,6 +40,7 @@ class ValidationResult:
     passed: bool
     failures: list[str] = field(default_factory=list)
     tos_flagged: bool = False
+    flagged_term: str | None = None
     warnings: list[str] = field(default_factory=list)
 
 
@@ -71,6 +56,7 @@ class AutoValidator:
         failures: list[str] = []
         warnings: list[str] = []
         tos_flagged = False
+        flagged_term: str | None = None
 
         # Check 1: rojo build succeeded
         if not rojo_result.success:
@@ -95,10 +81,12 @@ class AutoValidator:
             scan_targets.append(concept_file)
         for f in scan_targets:
             text = f.read_text(encoding="utf-8", errors="replace")
-            match = _BLOCKED_RE.search(text)
-            if match:
+            term = scan_for_blocked_term(text)
+            if term:
                 tos_flagged = True
-                failures.append(f"TOS blocked term '{match.group(0)}' in {f.name}")
+                if flagged_term is None:
+                    flagged_term = term
+                failures.append(f"TOS blocked term '{term}' in {f.name}")
 
         # Check 5: RemoteEvent server-side validation
         failures.extend(self._check_remote_validation(build_dir, luau_files))
@@ -117,6 +105,7 @@ class AutoValidator:
             passed=not failures,
             failures=failures,
             tos_flagged=tos_flagged,
+            flagged_term=flagged_term,
             warnings=warnings,
         )
         for w in warnings:

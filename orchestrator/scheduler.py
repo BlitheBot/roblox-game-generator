@@ -461,11 +461,15 @@ class Orchestrator:
                 f"{concept.concept_id}; it will retry next cycle."
             )
             return
-        pipeline = BuildPipeline(self._pool)
+        pipeline = BuildPipeline(self._pool, self._reporter)
         output = await pipeline.run(
             concept.concept_id, meta_keywords=await self._get_meta_keywords()
         )
         if output is None:
+            # Bug 1: a TOS discard already fired its own one-line alert — don't
+            # double-alert with the generic build-failure message.
+            if pipeline.last_tos_discard is not None:
+                return
             await self._discord_alert(
                 f"Build failed for concept {concept.concept_id} "
                 f"({concept.mechanic_tag}) after all retries — see build_failures table."

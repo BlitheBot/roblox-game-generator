@@ -13,11 +13,13 @@ import pathlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import asyncpg
 import structlog
 
 from intelligence.llm_client import CLAUDE_OPUS, CLAUDE_SONNET
+from util.tos import TOSViolation
 
 from .asset_generator import AssetGenerator
 from .asset_verifier import AssetVerifier
@@ -27,6 +29,9 @@ from .decoration_pass import DecorationPass
 from .luau_agent import LuauAgent
 from .rojo_builder import RojoBuilder
 from .toolbox_resolver import ToolboxAssetResolver
+
+if TYPE_CHECKING:
+    from monitor.discord_reporter import DiscordReporter
 
 log = structlog.get_logger()
 
@@ -52,8 +57,14 @@ class BuildOutput:
 
 
 class BuildPipeline:
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self, pool: asyncpg.Pool, reporter: "DiscordReporter | None" = None
+    ) -> None:
         self._pool = pool
+        self._reporter = reporter
+        # Set when run() discards a concept for TOS content so the caller can
+        # skip its generic "build failed" alert (the TOS alert already fired).
+        self.last_tos_discard: tuple[str, str] | None = None
         self._concept_gen = ConceptGenerator()
         self._luau_agent = LuauAgent()
         self._resolver = ToolboxAssetResolver()
@@ -76,6 +87,7 @@ class BuildPipeline:
         self, concept_id: str, meta_keywords: list[str] | None = None
     ) -> BuildOutput | None:
         await self._set_status(concept_id, "building")
+        self.last_tos_discard = None
         game_id = str(uuid.uuid4())
 
         try:
@@ -91,6 +103,11 @@ class BuildPipeline:
             concept["cross_promo_siblings"] = await get_siblings(
                 self._pool, concept.get("target_genre_account") or "sim"
             )
+        except TOSViolation as exc:
+            # Bug 1: the concept generator pre-screen caught blocked content.
+            # Discard permanently — never retried, never escalated.
+            await self._discard_tos(concept_id, exc)
+            return None
         except Exception as exc:
             await self._log_failure(concept_id, "concept_generation", str(exc), "deepseek", 0)
             await self._set_status(concept_id, "failed")
@@ -103,6 +120,12 @@ class BuildPipeline:
                     output = await self._attempt_build(
                         concept, concept_id, game_id, model, error_context, meta_keywords
                     )
+                except TOSViolation as exc:
+                    # Bug 1: a TOS hit in the generated build is a content
+                    # issue, not a code-quality one. Discard immediately —
+                    # do NOT add to the retry ladder, do NOT escalate models.
+                    await self._discard_tos(concept_id, exc)
+                    return None
                 except Exception as exc:
                     error_context = str(exc)[:2000]
                     await self._log_failure(concept_id, "build_attempt", error_context, model, attempt)
@@ -122,6 +145,24 @@ class BuildPipeline:
         await self._set_status(concept_id, "failed")
         log.error("pipeline.exhausted_retries", concept_id=concept_id)
         return None
+
+    async def _discard_tos(self, concept_id: str, exc: TOSViolation) -> None:
+        """Bug 1: permanently discard a TOS-flagged concept. Marks it failed,
+        fires exactly one Discord alert, and records the discard so the caller
+        skips its generic build-failure alert."""
+        await self._set_status(concept_id, "failed")
+        self.last_tos_discard = (exc.game_title, exc.term)
+        log.error(
+            "pipeline.tos_discarded",
+            concept_id=concept_id,
+            term=exc.term,
+            title=exc.game_title,
+        )
+        if self._reporter is not None:
+            await self._reporter.alert(
+                f"TOS concept discarded — {exc.game_title}: {exc.term}. "
+                f"This concept will not be retried."
+            )
 
     _last_validation_error: str | None = None
 
@@ -145,13 +186,21 @@ class BuildPipeline:
 
         if not validation.passed:
             self._last_validation_error = "; ".join(validation.failures)[:2000]
-            # 'tos_flag' rows trigger an immediate Discord alert (spec 6.4)
-            stage = "tos_flag" if validation.tos_flagged else "auto_validator"
-            await self._log_failure(
-                concept_id, stage, self._last_validation_error, model, 1
-            )
             if validation.tos_flagged:
+                # Bug 1: log once under the 'tos_flag' stage, then raise so the
+                # pipeline discards the concept immediately — no retry ladder,
+                # no model escalation (TOS content can't be fixed by retrying).
+                await self._log_failure(
+                    concept_id, "tos_flag", self._last_validation_error, model, 1
+                )
                 log.error("pipeline.tos_flagged", concept_id=concept_id)
+                raise TOSViolation(
+                    validation.flagged_term or "blocked term",
+                    concept.get("game_title", "Untitled"),
+                )
+            await self._log_failure(
+                concept_id, "auto_validator", self._last_validation_error, model, 1
+            )
             return None
 
         assets = await self._assets.generate_all(concept, build_dir, meta_keywords)

@@ -12,8 +12,13 @@ import structlog
 from intelligence.llm_client import DEEPSEEK_V3, chat_json
 from intelligence.name_blacklist import check_similarity, get_blacklist
 from intelligence.seasonal_context import get_seasonal_context
+from util.tos import TOSViolation, scan_for_blocked_term
 
 log = structlog.get_logger()
+
+# Bug 1: TOS pre-screen. Catch blocked content at the concept stage so it
+# never wastes build time; regenerate up to this many times before discarding.
+MAX_TOS_REGENS = 3
 
 # Spec 15: trends originating predominantly from these non-English markets
 # flag the game for localized description/metadata (published as an update
@@ -144,6 +149,26 @@ class ConceptGenerator:
             },
         ]
         concept = await chat_json(DEEPSEEK_V3, messages, temperature=0.8)
+
+        # Bug 1: pre-screen the full generated concept for TOS-blocked terms
+        # BEFORE any build work. Regenerate up to MAX_TOS_REGENS times; if it
+        # still trips the screen, raise so the pipeline discards it permanently.
+        term = scan_for_blocked_term(json.dumps(concept))
+        regens = 0
+        while term is not None:
+            log.warning(
+                "concept_generator.tos_prescreen_flagged",
+                concept_id=concept_id,
+                term=term,
+                attempt=regens,
+                title=concept.get("game_title"),
+            )
+            if regens >= MAX_TOS_REGENS:
+                raise TOSViolation(term, str(concept.get("game_title", "Untitled")))
+            regens += 1
+            concept = await chat_json(DEEPSEEK_V3, messages, temperature=0.9)
+            term = scan_for_blocked_term(json.dumps(concept))
+
         await self._ensure_distinct_title(concept)
 
         # Enforce invariants regardless of what the model returned

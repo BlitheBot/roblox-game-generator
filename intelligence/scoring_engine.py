@@ -18,6 +18,7 @@ from .trend_predictor import PreArrivalTrend, TrendPredictorResult
 from .mechanic_mapper import MappedSignal
 from .gap_analyzer import GapAnalysisResult
 from .seasonal_context import SEASONAL_BOOST, get_seasonal_context
+from util.tos import scan_for_blocked_term
 
 log = structlog.get_logger()
 
@@ -206,6 +207,24 @@ class ViabilityGate:
                 score=best.opportunity_score,
             )
 
+        # Bug 1: TOS pre-screen at the concept stage. Drop any seed whose text
+        # contains a blocked term BEFORE it is queued or built — so it never
+        # wastes build time and never reaches the build pipeline.
+        screened: list[ScoredConcept] = []
+        for concept in passing:
+            term = scan_for_blocked_term(self._seed_text(concept))
+            if term is not None:
+                log.warning(
+                    "viability_gate.tos_prescreen_discarded",
+                    concept_id=concept.concept_id,
+                    term=term,
+                    genre=concept.genre,
+                    mechanic=concept.mechanic_tag,
+                )
+                continue
+            screened.append(concept)
+        passing = screened
+
         for concept in passing:
             await self._write_to_db(concept)
 
@@ -222,6 +241,18 @@ class ViabilityGate:
             threshold_used=threshold,
             fallback_triggered=fallback_triggered,
         )
+
+    @staticmethod
+    def _seed_text(concept: ScoredConcept) -> str:
+        """All free-text fields of a seed concept, joined for TOS screening."""
+        gap = concept.gap_result
+        parts = [
+            concept.genre,
+            concept.mechanic_tag,
+            gap.closest_existing_game or "",
+            " ".join(gap.differentiation_suggestions or []),
+        ]
+        return " ".join(p for p in parts if p)
 
     async def _write_to_db(self, concept: ScoredConcept) -> None:
         concept_json = {
