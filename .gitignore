@@ -9,3 +9,8 @@ build/__pycache__/
 .pytest_cache/
 *.rbxl
 /builds/
+
+# Runtime-regenerated data (refreshed on a 24h cycle + lazily on read) —
+# tracking it makes every `git pull` on a live host conflict with the
+# locally-updated copy. See intelligence/name_blacklist.py.
+data/name_blacklist.json
