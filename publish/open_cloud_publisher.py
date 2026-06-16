@@ -66,33 +66,55 @@ def load_genre_account(genre: str) -> GenreAccount:
         ) from exc
 
 
-def genre_place_pool(genre: str) -> list[int]:
-    """Spec 13: up to 5 places per genre account. ROBLOX_PLACE_IDS_{GENRE}
-    is a comma-separated pool; ROBLOX_PLACE_ID_{GENRE} (single) still
-    works as a pool of one."""
+def genre_slots(genre: str) -> list[tuple[int, int]]:
+    """Publishing slots for a genre account as (universe_id, place_id) pairs.
+    Each Roblox game is its own universe with its own place, so a slot is a
+    matched pair — not several places under one shared universe.
+
+    Canonical form: ROBLOX_SLOTS_{GENRE} = "universe:place,universe:place,...".
+    Backward-compatible fallback for single-universe accounts: pair the one
+    ROBLOX_UNIVERSE_ID_{GENRE} with each id in ROBLOX_PLACE_IDS_{GENRE}, or
+    with ROBLOX_PLACE_ID_{GENRE}."""
     suffix = genre.upper()
+    slots_raw = os.environ.get(f"ROBLOX_SLOTS_{suffix}", "").strip()
+    if slots_raw:
+        slots: list[tuple[int, int]] = []
+        for pair in slots_raw.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            universe_str, _, place_str = pair.partition(":")
+            slots.append((int(universe_str.strip()), int(place_str.strip())))
+        return slots
+    uni = os.environ.get(f"ROBLOX_UNIVERSE_ID_{suffix}", "").strip()
+    if not uni:
+        return []
+    universe_id = int(uni)
     multi = os.environ.get(f"ROBLOX_PLACE_IDS_{suffix}", "").strip()
     if multi:
-        return [int(p.strip()) for p in multi.split(",") if p.strip()]
+        return [(universe_id, int(p.strip())) for p in multi.split(",") if p.strip()]
     single = os.environ.get(f"ROBLOX_PLACE_ID_{suffix}", "").strip()
-    return [int(single)] if single else []
+    return [(universe_id, int(single))] if single else []
 
 
-async def upload_thumbnail(genre: str, thumbnail_path: pathlib.Path) -> None:
-    """Standalone thumbnail upload — used by breakout regen (spec 6.2) and
-    low-CTR refresh (spec 5.2) outside the full publish flow."""
+async def upload_thumbnail(
+    genre: str, universe_id: int, thumbnail_path: pathlib.Path
+) -> None:
+    """Standalone thumbnail upload to a specific game's universe — used by
+    breakout regen (spec 6.2), low-CTR refresh (spec 5.2), and seasonal
+    reskins, outside the full publish flow."""
     if dry_run_enabled():
         log.info("publisher.dry_run_thumbnail_skipped", genre=genre)
         return
     account = load_genre_account(genre)
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
-            f"{APIS_BASE}/universes/v1/{account.universe_id}/thumbnails",
+            f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
             headers={"x-api-key": account.api_key},
             files={"file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")},
         )
         resp.raise_for_status()
-    log.info("publisher.thumbnail_refreshed", genre=genre)
+    log.info("publisher.thumbnail_refreshed", genre=genre, universe_id=universe_id)
 
 
 class OpenCloudPublisher:
@@ -132,18 +154,19 @@ class OpenCloudPublisher:
                 error=f"genre '{genre}' published within last {PUBLISH_COOLDOWN_HOURS}h",
             )
 
-        # Spec 13: each game gets its own place — never overwrite a live one
-        place_id = await self._select_free_place(genre)
-        if place_id is None:
+        # Spec 13: each game gets its own universe+place slot — never
+        # overwrite a live one
+        slot = await self._select_free_slot(genre)
+        if slot is None:
             return PublishResult(
                 success=False,
                 error=(
-                    f"no free place on genre account '{genre}' — every id in "
-                    f"the pool already hosts a game. Create a new place (or "
-                    f"account, spec 13) and add it to ROBLOX_PLACE_IDS_"
-                    f"{genre.upper()}."
+                    f"no free slot on genre account '{genre}' — every "
+                    f"universe:place pair already hosts a game. Create a new "
+                    f"experience and add its pair to ROBLOX_SLOTS_{genre.upper()}."
                 ),
             )
+        universe_id, place_id = slot
 
         # Missing/misconfigured genre credentials must surface as a normal
         # failed PublishResult (which the ApprovalGate alerts on) rather than
@@ -157,7 +180,7 @@ class OpenCloudPublisher:
         async with httpx.AsyncClient(timeout=300) as client:
             # Step 1: upload place version
             resp = await client.post(
-                f"{APIS_BASE}/universes/v1/{account.universe_id}"
+                f"{APIS_BASE}/universes/v1/{universe_id}"
                 f"/places/{place_id}/versions",
                 params={"versionType": "Published"},
                 headers={**headers, "Content-Type": "application/octet-stream"},
@@ -171,7 +194,7 @@ class OpenCloudPublisher:
 
             # Step 2: set name + description (Open Cloud v2)
             resp = await client.patch(
-                f"{APIS_BASE}/cloud/v2/universes/{account.universe_id}",
+                f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
                 params={"updateMask": "displayName,description"},
                 headers={**headers, "Content-Type": "application/json"},
                 json={"displayName": game_title, "description": description},
@@ -187,7 +210,7 @@ class OpenCloudPublisher:
             # TODO: Open Cloud thumbnail upload is still the v1 endpoint per
             # spec 5.1; if Roblox moves it to /cloud/v2, update here.
             resp = await client.post(
-                f"{APIS_BASE}/universes/v1/{account.universe_id}/thumbnails",
+                f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
                 headers=headers,
                 files={"file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")},
             )
@@ -200,7 +223,7 @@ class OpenCloudPublisher:
 
             # Step 4: set place public
             resp = await client.patch(
-                f"{APIS_BASE}/cloud/v2/universes/{account.universe_id}",
+                f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
                 params={"updateMask": "visibility"},
                 headers={**headers, "Content-Type": "application/json"},
                 json={"visibility": "PUBLIC"},
@@ -224,7 +247,7 @@ class OpenCloudPublisher:
                 """,
                 uuid.UUID(game_id),
                 uuid.UUID(concept_id),
-                account.universe_id,
+                universe_id,
                 place_id,
                 genre,
                 datetime.now(timezone.utc),
@@ -250,41 +273,42 @@ class OpenCloudPublisher:
             game_id=game_id,
             title=game_title,
             genre=genre,
-            universe_id=account.universe_id,
+            universe_id=universe_id,
         )
         return PublishResult(
             success=True,
             game_id=game_id,
-            universe_id=account.universe_id,
+            universe_id=universe_id,
             place_id=place_id,
         )
 
-    async def _select_free_place(self, genre: str) -> int | None:
-        """First pool place id with no published game on it, else None."""
-        pool = genre_place_pool(genre)
+    async def _select_free_slot(self, genre: str) -> tuple[int, int] | None:
+        """First (universe_id, place_id) slot whose place hosts no published
+        game, else None."""
+        slots = genre_slots(genre)
         async with self._pool.acquire() as conn:
             used = await conn.fetch(
                 "SELECT DISTINCT place_id FROM published_games WHERE genre_account = $1",
                 genre,
             )
         occupied = {row["place_id"] for row in used}
-        for place_id in pool:
+        for universe_id, place_id in slots:
             if place_id not in occupied:
-                return place_id
+                return universe_id, place_id
         return None
 
     async def publish_update(
-        self, genre: str, place_id: int, rbxl_path: pathlib.Path
+        self, genre: str, universe_id: int, place_id: int, rbxl_path: pathlib.Path
     ) -> bool:
         """Spec 14: push a new place version to an already-live game.
-        Targets the game's own place — no new published_games row."""
+        Targets the game's own universe+place — no new published_games row."""
         if dry_run_enabled():
             log.info("publisher.dry_run_update_skipped", genre=genre)
             return False
         account = load_genre_account(genre)
         async with httpx.AsyncClient(timeout=300) as client:
             resp = await client.post(
-                f"{APIS_BASE}/universes/v1/{account.universe_id}"
+                f"{APIS_BASE}/universes/v1/{universe_id}"
                 f"/places/{place_id}/versions",
                 params={"versionType": "Published"},
                 headers={

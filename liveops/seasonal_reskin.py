@@ -116,7 +116,7 @@ async def maybe_reskin(
         image = await assets._generate_image(prompt)
         seasonal_path = build_thumbnail_dir / "thumbnail_seasonal.png"
         assets._save_resized(image, seasonal_path, (1920, 1080))
-        await upload_thumbnail(game["genre_account"], seasonal_path)
+        await upload_thumbnail(game["genre_account"], game["universe_id"], seasonal_path)
         changes.append("seasonal thumbnail uploaded")
     except Exception as exc:
         log.warning("liveops.seasonal.thumbnail_failed", error=str(exc))
@@ -189,7 +189,7 @@ async def revert_due_overrides(pool: asyncpg.Pool) -> list[str]:
             )
             thumb = row["original_thumbnail_url"]
             if thumb and pathlib.Path(thumb).exists():
-                await upload_thumbnail(row["genre_account"], pathlib.Path(thumb))
+                await upload_thumbnail(row["genre_account"], row["universe_id"], pathlib.Path(thumb))
             async with pool.acquire() as conn:
                 await conn.execute(
                     "UPDATE seasonal_overrides SET reverted = TRUE WHERE id = $1",

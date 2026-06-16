@@ -142,7 +142,7 @@ async def _limited_sellout_check(game: dict, monetization: dict) -> bool:
     async with httpx.AsyncClient(timeout=30) as client:
         for item in items:
             resp = await client.get(
-                f"{APIS_BASE}/datastores/v1/universes/{account.universe_id}"
+                f"{APIS_BASE}/datastores/v1/universes/{game['universe_id']}"
                 f"/standard-datastores/datastore/entries/entry",
                 params={
                     "datastoreName": "MonetizationGlobal_v1",

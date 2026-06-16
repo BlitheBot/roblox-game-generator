@@ -591,7 +591,7 @@ class Orchestrator:
                 async with self._pool.acquire() as conn:
                     row = await conn.fetchrow(
                         """
-                        SELECT pg.genre_account, cq.concept_json
+                        SELECT pg.genre_account, pg.universe_id, cq.concept_json
                         FROM published_games pg
                         JOIN concept_queue cq ON cq.id = pg.concept_id
                         WHERE pg.id = $1
@@ -608,7 +608,9 @@ class Orchestrator:
                 work_dir = builds_root / "active" / f"breakout_{game_id}"
                 work_dir.mkdir(parents=True, exist_ok=True)
                 generated = await assets.generate_all(concept, work_dir, alt_prompt=True)
-                await upload_thumbnail(row["genre_account"], generated["thumbnail"])
+                await upload_thumbnail(
+                    row["genre_account"], row["universe_id"], generated["thumbnail"]
+                )
                 log.info("cycle.monitor.breakout_thumbnail_regenerated", game_id=game_id)
             except Exception as exc:
                 log.warning(
@@ -698,7 +700,8 @@ class Orchestrator:
             )
             return
         await self._publisher.publish_update(
-            game["genre_account"], game["place_id"], rojo_result.rbxl_path
+            game["genre_account"], game["universe_id"], game["place_id"],
+            rojo_result.rbxl_path,
         )
 
     # ─────────────────────────────────────────────────────────
