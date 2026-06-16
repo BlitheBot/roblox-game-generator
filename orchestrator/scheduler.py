@@ -197,6 +197,18 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Core feature: publish queue processor — every 2 hours. Re-attempts
+        # rate-limited games whose scheduled_publish_after slot has arrived.
+        self._scheduler.add_job(
+            self._run_publish_queue_processor,
+            trigger=IntervalTrigger(hours=2),
+            id="publish_queue_processor",
+            name="Publish Queue Processor",
+            replace_existing=True,
+            misfire_grace_time=600,
+            coalesce=True,
+        )
+
         # Bug 2: place pool check — every 30 minutes. Detects pool recovery
         # (resume a paused account once new places are added) and warns
         # proactively when an account is down to its last place slots.
@@ -511,6 +523,16 @@ class Orchestrator:
             await self._approval_gate.process_decisions(self._publisher, self._marketer)
         except Exception as exc:
             await self._log_job_crash("approval_processing", exc)
+
+    async def _run_publish_queue_processor(self) -> None:
+        """Core feature: publish rate-limited games whose slot has opened."""
+        assert self._approval_gate and self._publisher and self._marketer
+        try:
+            await self._approval_gate.process_publish_queue(
+                self._publisher, self._marketer
+            )
+        except Exception as exc:
+            await self._log_job_crash("publish_queue_processor", exc)
 
     async def _run_pool_check(self) -> None:
         """Bug 2: detect place-pool recovery and warn before exhaustion."""

@@ -186,6 +186,36 @@ class ApprovalGate:
         # Loudly flag anything approved but still unpublished past the SLA
         await self.alert_stuck_rows()
 
+    async def process_publish_queue(
+        self, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
+    ) -> None:
+        """Section 7: re-attempt rate-limited games whose scheduled slot has
+        arrived. Runs every 2 hours. Publishing still goes through the
+        rate-limit check, so a slot that filled up since scheduling simply
+        re-defers (silently) rather than over-publishing."""
+        await self.check_pool_recovery()
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM pending_approvals
+                WHERE status = 'approved'
+                  AND processed_at IS NULL
+                  AND scheduled_publish_after IS NOT NULL
+                  AND scheduled_publish_after <= NOW()
+                ORDER BY scheduled_publish_after
+                """
+            )
+        for row in rows:
+            try:
+                await self._publish_approved(row, publisher, marketer)
+            except Exception as exc:
+                log.error(
+                    "approval_gate.queue_row_failed",
+                    game_id=str(row["game_id"]),
+                    error=str(exc),
+                )
+                await self._log_publish_failure(row["concept_id"], str(exc))
+
     async def alert_stuck_rows(self) -> None:
         """Spec/FIX 1: alert when a row has been approved but unpublished for
         more than STUCK_PUBLISH_MINUTES, deduped per game via
