@@ -138,7 +138,8 @@ class LiveOpsPipeline:
                 + "; ".join(validation.failures[:3])
             )
         published = await self._publisher.publish_update(
-            game["genre_account"], game["place_id"], rojo_result.rbxl_path
+            game["genre_account"], game["universe_id"], game["place_id"],
+            rojo_result.rbxl_path,
         )
         if not published:
             raise RuntimeError("publish_update returned False (see publisher logs)")

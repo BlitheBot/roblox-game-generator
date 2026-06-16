@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 import asyncpg
+import httpx
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -20,8 +21,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from db import get_pool, close_pool, run_migrations
 from intelligence.llm_client import set_spend_pool
-from intelligence.meta_scout import MetaScout
-from intelligence.trend_predictor import TrendPredictor
+from intelligence.meta_scout import MetaScout, MetaScoutResult
+from intelligence.trend_predictor import TrendPredictor, TrendPredictorResult
 from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
@@ -360,6 +361,18 @@ class Orchestrator:
         log.info("cycle.intelligence.start")
         try:
             await self._intelligence_cycle_inner()
+        except httpx.HTTPStatusError as exc:
+            # A 429 that outlived the retry/backoff is a transient OpenRouter
+            # rate limit, not a crash — skip this cycle quietly and let the
+            # next scheduled run retry. No alarm alert. Anything else is a real
+            # crash and goes through the shared Bug 3 handler.
+            if exc.response is not None and exc.response.status_code == 429:
+                log.warning(
+                    "cycle.intelligence.rate_limited",
+                    detail="OpenRouter 429 — skipping this cycle, will retry next run",
+                )
+            else:
+                await self._log_job_crash("intelligence_cycle", exc)
         except Exception as exc:
             # Bug 3: full traceback to build_failures + one detailed alert,
             # then continue — a crashed cycle must never kill the service.
@@ -377,11 +390,19 @@ class Orchestrator:
         assert self._mech_mapper and self._gap_analyzer
         assert self._scoring_eng and self._viability_gate and self._feedback_loop
 
-        # Step 1: Gather raw signals (parallel)
+        # Step 1: Gather raw signals (parallel). One source raising must not
+        # take down the whole cycle — degrade to that source's empty result.
         meta_result, trend_result = await asyncio.gather(
             self._meta_scout.run(),
             self._trend_pred.run(),
+            return_exceptions=True,
         )
+        if isinstance(meta_result, BaseException):
+            log.error("cycle.meta_scout_failed", error=repr(meta_result))
+            meta_result = MetaScoutResult()
+        if isinstance(trend_result, BaseException):
+            log.error("cycle.trend_predictor_failed", error=repr(trend_result))
+            trend_result = TrendPredictorResult()
         log.info(
             "cycle.signals_gathered",
             meta=len(meta_result.signals),
@@ -626,7 +647,7 @@ class Orchestrator:
                 async with self._pool.acquire() as conn:
                     row = await conn.fetchrow(
                         """
-                        SELECT pg.genre_account, cq.concept_json
+                        SELECT pg.genre_account, pg.universe_id, cq.concept_json
                         FROM published_games pg
                         JOIN concept_queue cq ON cq.id = pg.concept_id
                         WHERE pg.id = $1
@@ -643,7 +664,9 @@ class Orchestrator:
                 work_dir = builds_root / "active" / f"breakout_{game_id}"
                 work_dir.mkdir(parents=True, exist_ok=True)
                 generated = await assets.generate_all(concept, work_dir, alt_prompt=True)
-                await upload_thumbnail(row["genre_account"], generated["thumbnail"])
+                await upload_thumbnail(
+                    row["genre_account"], row["universe_id"], generated["thumbnail"]
+                )
                 log.info("cycle.monitor.breakout_thumbnail_regenerated", game_id=game_id)
             except Exception as exc:
                 log.warning(
@@ -733,7 +756,8 @@ class Orchestrator:
             )
             return
         await self._publisher.publish_update(
-            game["genre_account"], game["place_id"], rojo_result.rbxl_path
+            game["genre_account"], game["universe_id"], game["place_id"],
+            rojo_result.rbxl_path,
         )
 
     # ─────────────────────────────────────────────────────────

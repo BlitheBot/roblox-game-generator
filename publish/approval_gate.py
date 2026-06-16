@@ -39,8 +39,6 @@ log = structlog.get_logger()
 APPROVALS_TO_AUTONOMY = 5
 # A row approved but unpublished for longer than this is treated as stuck
 STUCK_PUBLISH_MINUTES = 30
-# Don't re-alert about the same stuck row more than once per this window
-STUCK_ALERT_COOLDOWN_HOURS = 1
 # Genre accounts whose place pools are tracked for exhaustion (Bug 2)
 PUBLISH_ACCOUNTS = ("idle", "horror", "sim")
 # Warn proactively when an account has fewer than this many free place slots
@@ -235,19 +233,15 @@ class ApprovalGate:
         for row in rows:
             # Bug 2: a game waiting because its account's place pool is
             # exhausted is NOT stuck — the pool-exhaustion alert already
-            # explained it. Don't pile on hourly "publish stuck" alerts.
+            # explained it. Don't pile on "publish stuck" alerts.
             if (await self._state_get(f"pool_exhausted_{row['genre']}")) == "true":
                 continue
+            # Fire exactly once per stuck row, ever — the presence of the
+            # state key means we've already alerted, so never alert again
+            # (previously a 1h cooldown re-fired every monitor cycle).
             key = f"alert_cooldown:stuck_publish:{row['game_id']}"
-            last = await self._state_get(key)
-            if last:
-                try:
-                    if datetime.now(timezone.utc) - datetime.fromisoformat(last) < timedelta(
-                        hours=STUCK_ALERT_COOLDOWN_HOURS
-                    ):
-                        continue
-                except ValueError:
-                    pass
+            if await self._state_get(key):
+                continue
             await self._reporter.alert(
                 f"Publish stuck — **{row['game_title']}** has been approved for "
                 f"{STUCK_PUBLISH_MINUTES}+ minutes without publishing. Check "

@@ -205,7 +205,13 @@ class MetaScout:
                 "content": f"Raw trend data:\n{payload_str}",
             },
         ]
-        result = await chat_json(GEMINI_FLASH, messages, temperature=0.2)
+        try:
+            result = await chat_json(GEMINI_FLASH, messages, temperature=0.2)
+        except Exception as exc:
+            # A malformed/over-long LLM reply must degrade to "no signals
+            # this cycle", never crash the whole intelligence cycle.
+            log.warning("meta_scout.llm_analysis_failed", error=str(exc))
+            return []
         signals = []
         for s in result.get("signals", []):
             try:

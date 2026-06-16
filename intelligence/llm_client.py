@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import re
 import time
 from typing import Any
 
@@ -161,13 +162,89 @@ async def chat(
             return content
 
 
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _repair_truncated_json(text: str) -> str | None:
+    """Best-effort repair of JSON truncated mid-structure (e.g. the model
+    hit max_tokens): cut back to the last *complete container* (the last
+    balanced `}`/`]`) and close any still-open brackets. Cutting only at
+    container boundaries avoids salvaging a half-written object as if it
+    were complete. Returns None if nothing is salvageable."""
+    last_safe: int | None = None
+    in_str = esc = False
+    for i, ch in enumerate(text):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in "}]":
+            last_safe = i + 1          # a container just closed here
+    if last_safe is None:
+        return None
+    prefix = text[:last_safe]
+    # Recompute the open brackets for the prefix and close them in reverse.
+    stack: list[str] = []
+    in_str = esc = False
+    for ch in prefix:
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in "}]" and stack:
+            stack.pop()
+    return prefix + "".join(reversed(stack))
+
+
+def _loads_lenient(text: str) -> dict:
+    """json.loads, but tolerant of the two malformations a capped LLM reply
+    produces: a trailing comma, and truncation at max_tokens. One over-long
+    model response must not crash a whole cycle."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        # 1) trailing comma before a closer: {"a":1,}  ->  {"a":1}
+        try:
+            return json.loads(_TRAILING_COMMA_RE.sub(r"\1", text))
+        except json.JSONDecodeError:
+            pass
+        # 2) truncated mid-structure: close at the last complete container
+        repaired = _repair_truncated_json(text)
+        if repaired is not None:
+            try:
+                return json.loads(_TRAILING_COMMA_RE.sub(r"\1", repaired))
+            except json.JSONDecodeError:
+                pass
+        raise ValueError(
+            f"model returned unparseable JSON ({len(text)} chars, "
+            f"truncation likely): {exc}"
+        ) from exc
+
+
 async def chat_json(
     model: str,
     messages: list[dict],
     temperature: float = 0.3,
-    max_tokens: int = 4096,
+    max_tokens: int = 8192,
 ) -> dict:
-    """Call OpenRouter and parse the response as JSON."""
+    """Call OpenRouter and parse the response as JSON. Tolerant of a reply
+    truncated at max_tokens (repaired to the last complete element)."""
     raw = await chat(
         model=model,
         messages=messages,
@@ -182,4 +259,4 @@ async def chat_json(
         if cleaned.startswith("json"):
             cleaned = cleaned[4:]
         cleaned = cleaned.rsplit("```", 1)[0].strip()
-    return json.loads(cleaned)
+    return _loads_lenient(cleaned)
