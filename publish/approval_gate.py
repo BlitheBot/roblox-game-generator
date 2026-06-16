@@ -29,6 +29,7 @@ from .build_archive import archive_build, discard_build
 from .marketer import InRobloxMarketer
 from .open_cloud_publisher import OpenCloudPublisher, PublishResult, dry_run_enabled
 from .rate_limiter import PublishRateLimiter
+from .title_ab_tester import TitleABTester
 
 if TYPE_CHECKING:
     from build.pipeline import BuildOutput
@@ -58,6 +59,7 @@ class ApprovalGate:
         self._reporter = reporter
         self._bot = bot
         self._rate_limiter = PublishRateLimiter()
+        self._title_tester = TitleABTester()
 
     # ── mode ────────────────────────────────────────────────
 
@@ -404,6 +406,16 @@ class ApprovalGate:
         except Exception as exc:
             log.warning("approval_gate.publish_failure_log_failed", error=str(exc))
 
+    @staticmethod
+    def _load_build_concept(build_dir: str) -> dict:
+        """Load the full concept.json written into a build dir (for title
+        variant generation). Returns {} if unavailable."""
+        try:
+            path = pathlib.Path(build_dir) / "concept.json"
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
     async def _opportunity_score(self, concept_id) -> float:
         """Opportunity score of the source concept, for the rate limiter's
         high-opportunity weekly exception. Defaults to 0.0 when unknown."""
@@ -571,6 +583,20 @@ class ApprovalGate:
             await on_game_published(self._pool, result.game_id)
         except Exception as exc:
             log.warning("approval_gate.cross_promo_failed", error=str(exc))
+        # Improvement 5: open a 48h title A/B test for the new game. Reads the
+        # full concept from the build dir (still present before archiving).
+        try:
+            if result.universe_id and result.game_id:
+                build_concept = self._load_build_concept(row["build_dir"])
+                variants = await self._title_tester.generate_title_variants(
+                    build_concept, row["game_title"]
+                )
+                await self._title_tester.start_title_test(
+                    self._pool, result.game_id, result.universe_id,
+                    row["genre"], variants,
+                )
+        except Exception as exc:
+            log.warning("approval_gate.title_ab_start_failed", error=str(exc))
         # Spec 18: archive the published build, prune to the newest
         # MAX_BUILDS_PER_GENRE per genre
         archived = archive_build(pathlib.Path(row["build_dir"]), row["genre"])

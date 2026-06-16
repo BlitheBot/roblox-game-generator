@@ -349,6 +349,35 @@ class OpenCloudPublisher:
         log.info("publisher.update_published", genre=genre)
         return True
 
+    async def update_title(self, genre: str, universe_id: int, new_title: str) -> bool:
+        """Improvement 5: set a live game's display name via Open Cloud v2.
+        Used by TitleABTester to rotate and lock in title variants."""
+        if dry_run_enabled():
+            log.info("publisher.dry_run_title_skipped", genre=genre)
+            return False
+        try:
+            account = load_genre_account(genre)
+        except RuntimeError as exc:
+            log.warning("publisher.update_title_no_account", genre=genre, error=str(exc))
+            return False
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.patch(
+                f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
+                params={"updateMask": "displayName"},
+                headers={"x-api-key": account.api_key, "Content-Type": "application/json"},
+                json={"displayName": new_title},
+            )
+        if resp.status_code not in (200, 201):
+            log.warning(
+                "publisher.update_title_failed",
+                genre=genre,
+                status=resp.status_code,
+                body=resp.text[:300],
+            )
+            return False
+        log.info("publisher.title_updated", genre=genre, universe_id=universe_id, title=new_title)
+        return True
+
     async def _is_rate_limited(self, genre: str) -> bool:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=PUBLISH_COOLDOWN_HOURS)
         async with self._pool.acquire() as conn:

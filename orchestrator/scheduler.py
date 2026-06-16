@@ -210,6 +210,18 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Improvement 5: title A/B rotation — every 16 hours. Rotates running
+        # title tests through their 3 variants and locks in the winner at 48h.
+        self._scheduler.add_job(
+            self._run_title_ab_rotation,
+            trigger=IntervalTrigger(hours=16),
+            id="title_ab_rotation",
+            name="Title A/B Rotation",
+            replace_existing=True,
+            misfire_grace_time=1800,
+            coalesce=True,
+        )
+
         # Bug 2: place pool check — every 30 minutes. Detects pool recovery
         # (resume a paused account once new places are added) and warns
         # proactively when an account is down to its last place slots.
@@ -571,6 +583,18 @@ class Orchestrator:
             )
         except Exception as exc:
             await self._log_job_crash("publish_queue_processor", exc)
+
+    async def _run_title_ab_rotation(self) -> None:
+        """Improvement 5: rotate/complete running title A/B tests."""
+        assert self._pool and self._publisher and self._reporter
+        try:
+            from publish.title_ab_tester import TitleABTester
+
+            await TitleABTester().process_title_rotations(
+                self._pool, self._publisher, self._reporter
+            )
+        except Exception as exc:
+            await self._log_job_crash("title_ab_rotation", exc)
 
     async def _run_pool_check(self) -> None:
         """Bug 2: detect place-pool recovery and warn before exhaustion."""
