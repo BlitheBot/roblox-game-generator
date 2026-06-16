@@ -28,6 +28,7 @@ from monitor.discord_reporter import DiscordReporter
 from .build_archive import archive_build, discard_build
 from .marketer import InRobloxMarketer
 from .open_cloud_publisher import OpenCloudPublisher, PublishResult, dry_run_enabled
+from .rate_limiter import PublishRateLimiter
 
 if TYPE_CHECKING:
     from build.pipeline import BuildOutput
@@ -58,6 +59,7 @@ class ApprovalGate:
         self._pool = pool
         self._reporter = reporter
         self._bot = bot
+        self._rate_limiter = PublishRateLimiter()
 
     # ── mode ────────────────────────────────────────────────
 
@@ -151,6 +153,11 @@ class ApprovalGate:
                 """
                 SELECT * FROM pending_approvals
                 WHERE status IN ('approved', 'skipped') AND processed_at IS NULL
+                  AND (
+                      status = 'skipped'
+                      OR scheduled_publish_after IS NULL
+                      OR scheduled_publish_after <= NOW()
+                  )
                 ORDER BY created_at
                 """
             )
@@ -355,6 +362,16 @@ class ApprovalGate:
         except Exception as exc:
             log.warning("approval_gate.publish_failure_log_failed", error=str(exc))
 
+    async def _opportunity_score(self, concept_id) -> float:
+        """Opportunity score of the source concept, for the rate limiter's
+        high-opportunity weekly exception. Defaults to 0.0 when unknown."""
+        async with self._pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT opportunity_score FROM concept_queue WHERE id = $1",
+                concept_id,
+            )
+        return float(val or 0.0)
+
     async def _state_get(self, key: str) -> str | None:
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
@@ -413,6 +430,38 @@ class ApprovalGate:
                 "approval_gate.publish_paused_pool_exhausted",
                 game_id=str(row["game_id"]),
                 genre=row["genre"],
+            )
+            return
+
+        # Core feature: enforce the publish rate limit. A blocked game is
+        # parked with a scheduled_publish_after slot and retried later by the
+        # publish_queue_processor — logged silently, never alerted to Discord.
+        opportunity_score = await self._opportunity_score(row["concept_id"])
+        allowed, reason = await self._rate_limiter.can_publish(
+            self._pool, row["genre"], opportunity_score
+        )
+        if not allowed:
+            next_slot = await self._rate_limiter.next_available_slot(
+                self._pool, row["genre"]
+            )
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE pending_approvals
+                    SET scheduled_publish_after = $2, rate_limit_reason = $3
+                    WHERE game_id = $1
+                    """,
+                    row["game_id"],
+                    next_slot,
+                    reason[:500],
+                )
+            log.info(
+                "approval_gate.rate_limited",
+                game_id=str(row["game_id"]),
+                genre=row["genre"],
+                opportunity_score=opportunity_score,
+                next_slot=next_slot.isoformat(),
+                reason=reason,
             )
             return
 
