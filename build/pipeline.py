@@ -77,6 +77,7 @@ class BuildPipeline:
     ) -> BuildOutput | None:
         await self._set_status(concept_id, "building")
         game_id = str(uuid.uuid4())
+        self._tos_rejected = False
 
         try:
             concept = await self._concept_gen.generate(self._pool, concept_id)
@@ -110,6 +111,17 @@ class BuildPipeline:
 
                 if output is not None:
                     return output
+                # TOS-flagged content is the concept's own fault, not a flaky
+                # build — never retry it on another attempt or model. Mark the
+                # concept terminally failed so it is permanently discarded.
+                if self._tos_rejected:
+                    await self._set_status(concept_id, "failed")
+                    log.error(
+                        "pipeline.tos_permanent_discard",
+                        concept_id=concept_id,
+                        title=concept.get("game_title"),
+                    )
+                    return None
                 # validation failed — error context already recorded by _attempt_build
                 error_context = self._last_validation_error
 
@@ -124,6 +136,7 @@ class BuildPipeline:
         return None
 
     _last_validation_error: str | None = None
+    _tos_rejected: bool = False
 
     async def _attempt_build(
         self,
@@ -151,6 +164,7 @@ class BuildPipeline:
                 concept_id, stage, self._last_validation_error, model, 1
             )
             if validation.tos_flagged:
+                self._tos_rejected = True
                 log.error("pipeline.tos_flagged", concept_id=concept_id)
             return None
 

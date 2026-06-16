@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 import asyncpg
+import httpx
 import structlog
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -335,6 +336,20 @@ class Orchestrator:
         log.info("cycle.intelligence.start")
         try:
             await self._intelligence_cycle_inner()
+        except httpx.HTTPStatusError as exc:
+            # A 429 that outlived the retry/backoff is a transient OpenRouter
+            # rate limit, not a crash — skip this cycle quietly and let the
+            # next scheduled run retry. No alarm alert.
+            if exc.response is not None and exc.response.status_code == 429:
+                log.warning(
+                    "cycle.intelligence.rate_limited",
+                    detail="OpenRouter 429 — skipping this cycle, will retry next run",
+                )
+            else:
+                log.error("cycle.intelligence.crashed", traceback=traceback.format_exc())
+                await self._discord_alert(
+                    "Intelligence cycle crashed — check logs. System will retry on next scheduled run."
+                )
         except Exception:
             log.error("cycle.intelligence.crashed", traceback=traceback.format_exc())
             await self._discord_alert(

@@ -38,8 +38,6 @@ log = structlog.get_logger()
 APPROVALS_TO_AUTONOMY = 5
 # A row approved but unpublished for longer than this is treated as stuck
 STUCK_PUBLISH_MINUTES = 30
-# Don't re-alert about the same stuck row more than once per this window
-STUCK_ALERT_COOLDOWN_HOURS = 1
 
 
 class ApprovalGate:
@@ -187,16 +185,12 @@ class ApprovalGate:
                 cutoff,
             )
         for row in rows:
+            # Fire exactly once per stuck row, ever — the presence of the
+            # state key means we've already alerted, so never alert again
+            # (previously a 1h cooldown re-fired every monitor cycle).
             key = f"alert_cooldown:stuck_publish:{row['game_id']}"
-            last = await self._state_get(key)
-            if last:
-                try:
-                    if datetime.now(timezone.utc) - datetime.fromisoformat(last) < timedelta(
-                        hours=STUCK_ALERT_COOLDOWN_HOURS
-                    ):
-                        continue
-                except ValueError:
-                    pass
+            if await self._state_get(key):
+                continue
             await self._reporter.alert(
                 f"Publish stuck — **{row['game_title']}** has been approved for "
                 f"{STUCK_PUBLISH_MINUTES}+ minutes without publishing. Check "
