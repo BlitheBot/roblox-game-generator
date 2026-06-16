@@ -197,6 +197,19 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Bug 2: place pool check — every 30 minutes. Detects pool recovery
+        # (resume a paused account once new places are added) and warns
+        # proactively when an account is down to its last place slots.
+        self._scheduler.add_job(
+            self._run_pool_check,
+            trigger=IntervalTrigger(minutes=30),
+            id="pool_check",
+            name="Place Pool Check",
+            replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
+        )
+
         # Live-game update cadence — daily at 03:00 (spec 14: breakout
         # daily, normal weekly, underperforming monthly)
         self._scheduler.add_job(
@@ -501,6 +514,15 @@ class Orchestrator:
             await self._approval_gate.process_decisions(self._publisher, self._marketer)
         except Exception:
             log.error("cycle.approval_processing_failed", traceback=traceback.format_exc())
+
+    async def _run_pool_check(self) -> None:
+        """Bug 2: detect place-pool recovery and warn before exhaustion."""
+        assert self._approval_gate
+        try:
+            await self._approval_gate.check_pool_recovery()
+            await self._approval_gate.proactive_pool_check()
+        except Exception:
+            log.error("cycle.pool_check_failed", traceback=traceback.format_exc())
 
     # ─────────────────────────────────────────────────────────
     # Monitor cycle

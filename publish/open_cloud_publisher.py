@@ -49,6 +49,7 @@ class PublishResult:
     place_id: int | None = None
     error: str | None = None
     rate_limited: bool = False
+    pool_exhausted: bool = False
 
 
 def load_genre_account(genre: str) -> GenreAccount:
@@ -76,6 +77,23 @@ def genre_place_pool(genre: str) -> list[int]:
         return [int(p.strip()) for p in multi.split(",") if p.strip()]
     single = os.environ.get(f"ROBLOX_PLACE_ID_{suffix}", "").strip()
     return [int(single)] if single else []
+
+
+async def free_place_count(pool: asyncpg.Pool, genre: str) -> tuple[int, int]:
+    """Bug 2: returns (free_slots, total_slots) for a genre account's place
+    pool — the env-configured place ids minus those already hosting a game.
+    Used for proactive low-slot warnings and pool-recovery detection."""
+    places = genre_place_pool(genre)
+    if not places:
+        return (0, 0)
+    async with pool.acquire() as conn:
+        used = await conn.fetch(
+            "SELECT DISTINCT place_id FROM published_games WHERE genre_account = $1",
+            genre,
+        )
+    occupied = {row["place_id"] for row in used}
+    free = sum(1 for p in places if p not in occupied)
+    return (free, len(places))
 
 
 async def upload_thumbnail(genre: str, thumbnail_path: pathlib.Path) -> None:
@@ -135,8 +153,11 @@ class OpenCloudPublisher:
         # Spec 13: each game gets its own place — never overwrite a live one
         place_id = await self._select_free_place(genre)
         if place_id is None:
+            # Bug 2: pool exhaustion is handled specially upstream (one alert,
+            # pause the account, leave the row queued) — flag it as such.
             return PublishResult(
                 success=False,
+                pool_exhausted=True,
                 error=(
                     f"no free place on genre account '{genre}' — every id in "
                     f"the pool already hosts a game. Create a new place (or "

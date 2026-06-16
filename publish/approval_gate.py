@@ -40,6 +40,12 @@ APPROVALS_TO_AUTONOMY = 5
 STUCK_PUBLISH_MINUTES = 30
 # Don't re-alert about the same stuck row more than once per this window
 STUCK_ALERT_COOLDOWN_HOURS = 1
+# Genre accounts whose place pools are tracked for exhaustion (Bug 2)
+PUBLISH_ACCOUNTS = ("idle", "horror", "sim")
+# Warn proactively when an account has fewer than this many free place slots
+POOL_LOW_SLOT_THRESHOLD = 2
+# Don't repeat the proactive low-slot warning more than once per this window
+POOL_LOW_ALERT_COOLDOWN_HOURS = 12
 
 
 class ApprovalGate:
@@ -137,6 +143,9 @@ class ApprovalGate:
     async def process_decisions(
         self, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
     ) -> None:
+        # Bug 2: before publishing, resume any account whose place pool has
+        # been replenished so its queued games go out on this tick.
+        await self.check_pool_recovery()
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
@@ -187,6 +196,11 @@ class ApprovalGate:
                 cutoff,
             )
         for row in rows:
+            # Bug 2: a game waiting because its account's place pool is
+            # exhausted is NOT stuck — the pool-exhaustion alert already
+            # explained it. Don't pile on hourly "publish stuck" alerts.
+            if (await self._state_get(f"pool_exhausted_{row['genre']}")) == "true":
+                continue
             key = f"alert_cooldown:stuck_publish:{row['game_id']}"
             last = await self._state_get(key)
             if last:
@@ -204,6 +218,88 @@ class ApprovalGate:
                 f"(`!retry {row['game_id']}`)."
             )
             await self._state_set(key, datetime.now(timezone.utc).isoformat())
+
+    # ── Bug 2: place pool exhaustion ────────────────────────
+
+    async def _handle_pool_exhaustion(self, genre: str) -> None:
+        """Pause publishing for an account whose place pool is exhausted.
+        Sends exactly ONE alert (deduped via the orchestrator_state flag) and
+        leaves the approved rows queued — they keep status='approved' and are
+        skipped on every cycle until check_pool_recovery() clears the flag."""
+        flag_key = f"pool_exhausted_{genre}"
+        if (await self._state_get(flag_key)) == "true":
+            return  # already paused + alerted — stay quiet
+        await self._state_set(flag_key, "true")
+
+        from .open_cloud_publisher import free_place_count
+
+        _, total = await free_place_count(self._pool, genre)
+        async with self._pool.acquire() as conn:
+            waiting = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM pending_approvals
+                WHERE genre = $1 AND status = 'approved' AND processed_at IS NULL
+                """,
+                genre,
+            )
+        await self._reporter.alert(
+            f"⚠️ Place pool exhausted for {genre} account.\n"
+            f"All {waiting} games are approved and waiting.\n"
+            f"To resume: add new blank places on Roblox, then add their IDs to "
+            f"ROBLOX_PLACE_IDS_{genre.upper()} in .env and restart the service.\n"
+            f"Publishing paused for {genre} account until fixed."
+        )
+        log.warning(
+            "approval_gate.pool_exhausted", genre=genre, total=total, waiting=waiting
+        )
+
+    async def check_pool_recovery(self) -> None:
+        """Clear the exhaustion flag and resume publishing for any paused
+        account that now has free place slots (operator added places and
+        restarted). Sends ONE 'resuming' alert per recovered account."""
+        from .open_cloud_publisher import free_place_count
+
+        for genre in PUBLISH_ACCOUNTS:
+            flag_key = f"pool_exhausted_{genre}"
+            if (await self._state_get(flag_key)) != "true":
+                continue
+            free, _ = await free_place_count(self._pool, genre)
+            if free > 0:
+                await self._state_set(flag_key, "false")
+                await self._reporter.alert(
+                    f"✅ New places detected for {genre} account — resuming publishing"
+                )
+                log.info("approval_gate.pool_recovered", genre=genre, free=free)
+
+    async def proactive_pool_check(self) -> None:
+        """Warn BEFORE exhaustion: when an account has fewer than
+        POOL_LOW_SLOT_THRESHOLD free place slots left. Deduped per account via
+        a cooldown so it isn't spammy. Runs on the 30-minute pool_check job."""
+        from .open_cloud_publisher import free_place_count
+
+        for genre in PUBLISH_ACCOUNTS:
+            free, total = await free_place_count(self._pool, genre)
+            if total == 0:
+                continue  # account has no configured place pool — nothing to warn
+            if free == 0:
+                continue  # fully exhausted — _handle_pool_exhaustion owns this
+            if free < POOL_LOW_SLOT_THRESHOLD:
+                key = f"alert_cooldown:pool_low:{genre}"
+                last = await self._state_get(key)
+                if last:
+                    try:
+                        if datetime.now(timezone.utc) - datetime.fromisoformat(
+                            last
+                        ) < timedelta(hours=POOL_LOW_ALERT_COOLDOWN_HOURS):
+                            continue
+                    except ValueError:
+                        pass
+                await self._reporter.alert(
+                    f"⚠️ {genre} account has only {free} place slots remaining "
+                    f"— add more places soon"
+                )
+                await self._state_set(key, datetime.now(timezone.utc).isoformat())
+                log.info("approval_gate.pool_low", genre=genre, free=free, total=total)
 
     async def retry(
         self, game_id_str: str, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
@@ -309,6 +405,17 @@ class ApprovalGate:
             )
             return
 
+        # Bug 2: if this account's pool is already known-exhausted, don't even
+        # try to publish — leave the row approved + queued. It resumes
+        # automatically once check_pool_recovery() clears the flag.
+        if (await self._state_get(f"pool_exhausted_{row['genre']}")) == "true":
+            log.info(
+                "approval_gate.publish_paused_pool_exhausted",
+                game_id=str(row["game_id"]),
+                genre=row["genre"],
+            )
+            return
+
         log.info(
             "approval_gate.processing", game_id=str(row["game_id"]), title=row["game_title"]
         )
@@ -326,6 +433,12 @@ class ApprovalGate:
             description=row["description"] or "",
             genre=row["genre"],
         )
+        if result.pool_exhausted:
+            # Bug 2: the place pool for this account is full. Pause the account
+            # with ONE alert and leave the row approved + queued — it resumes
+            # automatically once new places are added (check_pool_recovery).
+            await self._handle_pool_exhaustion(row["genre"])
+            return
         if result.rate_limited:
             # Cooldown (1 publish / 4h / account) — row stays queued for retry
             log.info("approval_gate.publish_deferred", game_id=str(row["game_id"]))
