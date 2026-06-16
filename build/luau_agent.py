@@ -3,7 +3,7 @@ LuauAgent (spec 4.2) — customizes a base Luau template into a complete
 game source tree. Claude Sonnet picks themed values; deterministic Python
 code performs the actual placeholder substitution so output always parses.
 
-Escalation: the pipeline passes model=CLAUDE_FABLE after 3 validator
+Escalation: the pipeline passes model=CLAUDE_OPUS after 3 validator
 failures (spec 4.6).
 """
 import json

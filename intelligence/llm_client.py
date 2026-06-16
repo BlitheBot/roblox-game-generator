@@ -46,7 +46,10 @@ async def _record_spend(model: str, usage: dict) -> None:
 GEMINI_FLASH   = os.environ.get("LLM_MODEL_FAST", "google/gemini-2.5-flash")
 DEEPSEEK_V3    = os.environ.get("LLM_MODEL_REASONING", "deepseek/deepseek-chat")
 CLAUDE_SONNET  = os.environ.get("LLM_MODEL_CODE", "anthropic/claude-sonnet-4.6")
-CLAUDE_FABLE   = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-fable-5")
+# Code-gen escalation tier. NOTE: anthropic/claude-fable-5 is listed in
+# OpenRouter's /models but is gated ("Fable Mythos access") and 404s on
+# call — escalate to Opus, which is both available and more capable.
+CLAUDE_OPUS    = os.environ.get("LLM_MODEL_CODE_ESCALATION", "anthropic/claude-opus-4.8")
 
 
 def _headers() -> dict[str, str]:
@@ -58,7 +61,9 @@ def _headers() -> dict[str, str]:
     }
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+# reraise=True so callers (and build_failures) see the underlying
+# HTTPStatusError with its status/body, not an opaque RetryError wrapper.
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
 async def chat(
     model: str,
     messages: list[dict],
