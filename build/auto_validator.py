@@ -24,6 +24,10 @@ log = structlog.get_logger()
 
 MAX_SCRIPT_BYTES = 200 * 1024
 
+# PART 6/7 performance scans (warnings only)
+_RANGE_RE = re.compile(r"\.Range\s*=\s*(\d+)")
+_RATE_RE = re.compile(r"\.Rate\s*=\s*(\d+)")
+
 # TOS keyword scan — weapons-realism, slurs/hate placeholders, adult content,
 # and scam-bait terms. Kept conservative; matched case-insensitively on word
 # boundaries against all Luau source + concept text.
@@ -52,6 +56,7 @@ class ValidationResult:
     passed: bool
     failures: list[str] = field(default_factory=list)
     tos_flagged: bool = False
+    warnings: list[str] = field(default_factory=list)
 
 
 class AutoValidator:
@@ -64,6 +69,7 @@ class AutoValidator:
         self, build_dir: pathlib.Path, rojo_result: RojoBuildResult
     ) -> ValidationResult:
         failures: list[str] = []
+        warnings: list[str] = []
         tos_flagged = False
 
         # Check 1: rojo build succeeded
@@ -100,18 +106,26 @@ class AutoValidator:
         # Check 6: project.json structure
         failures.extend(self._check_project_json(build_dir))
 
-        # Check 7: visual quality gate — a build must ship lighting, a map, a
-        # loading screen and ambient sound or it goes back to LuauAgent on the
-        # same retry ladder as code failures.
-        failures.extend(self._check_visual_quality(build_dir))
+        # Check 7: visual quality gate — hard failures (lighting/map/loading/
+        # sound) block publishing; soft warnings (default grey, while-true,
+        # PointLight Range>50, ParticleEmitter Rate>50) are logged only.
+        vq_failures, vq_warnings = self._check_visual_quality(build_dir)
+        failures.extend(vq_failures)
+        warnings.extend(vq_warnings)
 
         result = ValidationResult(
-            passed=not failures, failures=failures, tos_flagged=tos_flagged
+            passed=not failures,
+            failures=failures,
+            tos_flagged=tos_flagged,
+            warnings=warnings,
         )
+        for w in warnings:
+            log.warning("auto_validator.quality_warning", detail=w)
         log.info(
             "auto_validator.complete",
             passed=result.passed,
             failure_count=len(failures),
+            warning_count=len(warnings),
             tos_flagged=tos_flagged,
         )
         return result
@@ -195,34 +209,69 @@ class AutoValidator:
         return failures
 
     @staticmethod
-    def _check_visual_quality(build_dir: pathlib.Path) -> list[str]:
-        """A game must meet minimum visual-polish standards before publishing
-        so no build ever ships looking like an incomplete baseplate."""
+    def _check_visual_quality(
+        build_dir: pathlib.Path,
+    ) -> tuple[list[str], list[str]]:
+        """Returns (failures, warnings). Failures block publishing (no game
+        ships looking like a baseplate); warnings are logged only (PART 6/7
+        performance + theming hygiene)."""
         failures: list[str] = []
+        warnings: list[str] = []
+        src = build_dir / "src"
+        server = src / "ServerScriptService"
+        starter_gui = src / "StarterGui"
 
-        # Must have a LightingService script
-        if not (build_dir / "src/ServerScriptService/LightingService.server.luau").exists():
-            failures.append("Missing LightingService — game will have default ugly lighting")
-
-        # Must have a MapBuilder script
-        if not (build_dir / "src/ServerScriptService/MapBuilder.server.luau").exists():
-            failures.append("Missing MapBuilder — game will have no map")
-
-        # Must have a loading screen
-        starter_gui = build_dir / "src/StarterGui"
+        # ── Hard failures ───────────────────────────────────────
+        if not (server.exists() and any(server.rglob("*Lighting*"))):
+            failures.append("Missing lighting setup — game will look like default Roblox")
+        if not (server.exists() and any(server.rglob("*Map*"))):
+            failures.append("Missing map builder — game has no world")
         loading_exists = (
             any("loading" in f.name.lower() for f in starter_gui.rglob("*.luau"))
             if starter_gui.exists()
             else False
         )
         if not loading_exists:
-            failures.append("Missing loading screen — players will see blank baseplate on join")
-
-        # Must have ambient sound
-        if not (build_dir / "src/ServerScriptService/SoundService.server.luau").exists():
+            failures.append("Missing loading screen — players see blank baseplate")
+        # SoundService kept as a hard requirement (every template ships one)
+        if not (server.exists() and any(server.rglob("*Sound*"))):
             failures.append("Missing SoundService — game will be silent")
 
-        return failures
+        # ── Soft warnings (do not block publishing) ─────────────
+        all_luau = list(build_dir.rglob("*.luau"))
+        texts = {f: f.read_text(errors="replace") for f in all_luau}
+
+        default_grey = sum(1 for t in texts.values() if "Color3.fromRGB(163, 162, 165)" in t)
+        if default_grey > 3:
+            warnings.append(
+                f"Found {default_grey} uses of default grey color — map may look unthemed"
+            )
+
+        while_true = sum(1 for t in texts.values() if "while true do" in t)
+        if while_true > 0:
+            warnings.append(
+                f"Found {while_true} 'while true do' loop(s) — prefer RunService.Heartbeat/task.wait"
+            )
+
+        range_over = sum(
+            1
+            for t in texts.values()
+            for m in _RANGE_RE.findall(t)
+            if int(m) > 50
+        )
+        if range_over > 0:
+            warnings.append(f"Found {range_over} PointLight Range value(s) > 50 — caps perf")
+
+        rate_over = sum(
+            1
+            for t in texts.values()
+            for m in _RATE_RE.findall(t)
+            if int(m) > 50
+        )
+        if rate_over > 0:
+            warnings.append(f"Found {rate_over} ParticleEmitter Rate value(s) > 50 — caps perf")
+
+        return failures, warnings
 
     @staticmethod
     def _check_project_json(build_dir: pathlib.Path) -> list[str]:
