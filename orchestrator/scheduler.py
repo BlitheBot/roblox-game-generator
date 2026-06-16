@@ -20,8 +20,8 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from db import get_pool, close_pool, run_migrations
 from intelligence.llm_client import set_spend_pool
-from intelligence.meta_scout import MetaScout
-from intelligence.trend_predictor import TrendPredictor
+from intelligence.meta_scout import MetaScout, MetaScoutResult
+from intelligence.trend_predictor import TrendPredictor, TrendPredictorResult
 from intelligence.mechanic_mapper import MechanicMapper
 from intelligence.gap_analyzer import GapAnalyzer
 from intelligence.scoring_engine import ScoringEngine, ViabilityGate, FeedbackLoop
@@ -353,11 +353,19 @@ class Orchestrator:
         assert self._mech_mapper and self._gap_analyzer
         assert self._scoring_eng and self._viability_gate and self._feedback_loop
 
-        # Step 1: Gather raw signals (parallel)
+        # Step 1: Gather raw signals (parallel). One source raising must not
+        # take down the whole cycle — degrade to that source's empty result.
         meta_result, trend_result = await asyncio.gather(
             self._meta_scout.run(),
             self._trend_pred.run(),
+            return_exceptions=True,
         )
+        if isinstance(meta_result, BaseException):
+            log.error("cycle.meta_scout_failed", error=repr(meta_result))
+            meta_result = MetaScoutResult()
+        if isinstance(trend_result, BaseException):
+            log.error("cycle.trend_predictor_failed", error=repr(trend_result))
+            trend_result = TrendPredictorResult()
         log.info(
             "cycle.signals_gathered",
             meta=len(meta_result.signals),
