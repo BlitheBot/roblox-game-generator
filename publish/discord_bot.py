@@ -30,6 +30,8 @@ import asyncpg
 import discord
 import structlog
 
+from .rate_limiter import PublishRateLimiter, _get_limits
+
 log = structlog.get_logger()
 
 # Roblox DevEx conversion rate (USD per Robux) — for the !revenue estimate
@@ -42,6 +44,7 @@ class ApprovalBot(discord.Client):
         intents.message_content = True
         super().__init__(intents=intents)
         self._pool = pool
+        self._rate_limiter = PublishRateLimiter()
         self._owner_id = int(os.environ["DISCORD_OWNER_ID"])
         # Wired post-construction by the orchestrator via attach()
         self._orchestrator = None
@@ -275,14 +278,33 @@ class ApprovalBot(discord.Client):
             alerts.append(f"{stuck} approved publish(es) not yet processed")
         if failures_24h:
             alerts.append(f"{failures_24h} build failure(s) in 24h")
+
+        schedule = await self._rate_limiter.get_schedule_summary(self._pool)
+        total_this_week = sum(s["games_this_week"] for s in schedule.values())
+        weekly_cap = _get_limits()["max_per_week_all_accounts"]
+
         lines = [
             "**System Status:**",
-            f"- Orchestrator: {'paused' if paused else 'running'}",
-            f"- Last cycle: {last_cycle}",
-            f"- Next cycle: {next_cycle}",
-            f"- Games live: {live or 0}",
-            f"- Pending approvals: {pending or 0}",
-            f"- Active alerts: {', '.join(alerts) if alerts else 'none'}",
+            f"🟢 Orchestrator: {'paused' if paused else 'running'}",
+            f"⏰ Last cycle: {last_cycle}",
+            f"🔄 Next cycle: {next_cycle}",
+            "",
+            "📅 **This Week's Publish Schedule:**",
+        ]
+        for account in ("idle", "horror", "sim"):
+            s = schedule.get(account)
+            if not s:
+                continue
+            lines.append(
+                f"  {account+':':7} {s['games_this_week']}/{s['weekly_limit']} "
+                f"games published | next slot: {s['next_publish_window']}"
+            )
+        lines += [
+            "",
+            f"📊 Total this week: {total_this_week}/{weekly_cap} games",
+            f"🎮 Games live: {live or 0}",
+            f"⏳ Pending approval: {pending or 0}",
+            f"🔔 Active alerts: {', '.join(alerts) if alerts else 'none'}",
         ]
         await message.reply("\n".join(lines)[:1900])
 
@@ -381,23 +403,64 @@ class ApprovalBot(discord.Client):
             pending = await conn.fetchval(
                 "SELECT COUNT(*) FROM pending_approvals WHERE status = 'pending'"
             )
+            rate_limited = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM pending_approvals
+                WHERE status = 'approved' AND processed_at IS NULL
+                  AND scheduled_publish_after IS NOT NULL
+                  AND scheduled_publish_after > NOW()
+                """
+            )
             last3 = await conn.fetch(
-                "SELECT game_title FROM published_games ORDER BY published_at DESC LIMIT 3"
+                """
+                SELECT game_title, genre_account,
+                       EXTRACT(EPOCH FROM (NOW() - published_at)) AS age_seconds
+                FROM published_games ORDER BY published_at DESC LIMIT 3
+                """
             )
         building_str = (
             ", ".join(f"{b['mechanic_tag']} ({b['genre']})" for b in building)
             if building
-            else "none"
+            else "idle"
         )
-        last3_str = ", ".join(r["game_title"] for r in last3) if last3 else "none"
+        schedule = await self._rate_limiter.get_schedule_summary(self._pool)
         lines = [
             "**Pipeline Status:**",
-            f"Queued concepts: {queued or 0}",
-            f"Currently building: {building_str}",
-            f"Pending approval: {pending or 0}",
-            f"Last 3 published: {last3_str}",
+            f"💡 Queued concepts: {queued or 0}",
+            f"🔨 Currently building: {building_str}",
+            f"✅ Pending approval: {pending or 0}",
+            f"⏳ Rate-limited (waiting for slot): {rate_limited or 0}",
+            "",
+            "Next publish slots:",
         ]
+        for account in ("idle", "horror", "sim"):
+            s = schedule.get(account)
+            if not s:
+                continue
+            lines.append(
+                f"  {account+':':7} {s['next_publish_window']} "
+                f"({s['slots_remaining']} slots remaining)"
+            )
+        lines += ["", "Last 3 published:"]
+        if last3:
+            for r in last3:
+                lines.append(
+                    f"  • {r['game_title']} ({r['genre_account']}) — "
+                    f"{self._ago(r['age_seconds'])}"
+                )
+        else:
+            lines.append("  • none")
         await message.reply("\n".join(lines)[:1900])
+
+    @staticmethod
+    def _ago(seconds) -> str:
+        """Human-readable 'time ago' for a publish age in seconds."""
+        s = int(seconds or 0)
+        if s < 3600:
+            return f"{max(1, s // 60)}m ago"
+        if s < 86400:
+            return f"{s // 3600}h ago"
+        return f"{s // 86400}d ago"
 
     # ── orchestrator_state helpers ──────────────────────────
 
