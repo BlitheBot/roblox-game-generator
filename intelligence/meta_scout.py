@@ -128,7 +128,12 @@ class MetaScout:
                     for v in videos
                 ]
             except Exception as exc:
-                log.warning("meta_scout.youtube_api_failed", error=str(exc))
+                # httpx errors embed the request URL (incl. the API key) —
+                # redact before logging
+                log.warning(
+                    "meta_scout.youtube_api_failed",
+                    error=youtube.redact_key(str(exc)),
+                )
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 params = {

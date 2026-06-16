@@ -8,6 +8,7 @@ publishedAfter parameter can. When YOUTUBE_API_KEY is unset, callers fall
 back to scraping with the closest native filter.
 """
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -17,9 +18,18 @@ log = structlog.get_logger()
 
 YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3"
 
+_KEY_PARAM_RE = re.compile(r"(?i)(key=)[^&\s'\"]+")
+
 
 def api_key() -> str:
     return os.environ.get("YOUTUBE_API_KEY", "")
+
+
+def redact_key(text: str) -> str:
+    """Strip the `key=...` value out of a string before logging. httpx
+    error messages embed the full request URL, which includes the API key
+    in the query string — never let that reach the logs."""
+    return _KEY_PARAM_RE.sub(r"\1REDACTED", text)
 
 
 async def search_recent(
