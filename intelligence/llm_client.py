@@ -1,6 +1,8 @@
 """Thin OpenRouter wrapper used by every intelligence module."""
+import asyncio
 import json
 import os
+import time
 from typing import Any
 
 import asyncpg
@@ -12,6 +14,42 @@ log = structlog.get_logger()
 
 # Overridable for integration testing against scripts/mock_openrouter.py
 OPENROUTER_BASE = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+
+# ── Global OpenRouter throttle (FIX 7) ──────────────────────────────
+# A process-wide limiter shared by every agent: at most MAX_CALLS_PER_MINUTE
+# calls in any rolling 60s window, and a hard PAUSE_ON_429 cooldown for ALL
+# callers after any 429 so a rate-limit error never cascades mid-build.
+_MAX_CALLS_PER_MINUTE = 10
+_RATE_WINDOW_SECONDS = 60.0
+_PAUSE_ON_429_SECONDS = 60.0
+
+_call_times: list[float] = []
+_throttle_lock = asyncio.Lock()
+_paused_until = 0.0
+
+
+def _trip_429_pause() -> None:
+    global _paused_until
+    _paused_until = time.monotonic() + _PAUSE_ON_429_SECONDS
+
+
+async def _throttle() -> None:
+    """Block until it is safe to make another OpenRouter call under the global
+    rate limit / 429 cooldown."""
+    while True:
+        async with _throttle_lock:
+            now = time.monotonic()
+            if now < _paused_until:
+                wait = _paused_until - now
+            else:
+                cutoff = now - _RATE_WINDOW_SECONDS
+                while _call_times and _call_times[0] < cutoff:
+                    _call_times.pop(0)
+                if len(_call_times) < _MAX_CALLS_PER_MINUTE:
+                    _call_times.append(now)
+                    return
+                wait = _RATE_WINDOW_SECONDS - (now - _call_times[0])
+        await asyncio.sleep(max(wait, 0.05))
 
 # Optional spend logging — when the orchestrator registers a pool, every
 # chat call records its cost to llm_spend (feeds the $15/7d alert, spec 6.4)
@@ -58,7 +96,13 @@ def _headers() -> dict[str, str]:
     }
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+# Backoff delays of ~5s, 10s, 20s between the 4 attempts (FIX 7), and
+# reraise the underlying error so callers see the real cause, not RetryError.
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(multiplier=5, min=5, max=20),
+    reraise=True,
+)
 async def chat(
     model: str,
     messages: list[dict],
@@ -78,12 +122,19 @@ async def chat(
     if response_format:
         body["response_format"] = response_format
 
+    # Respect the global rate limit / 429 cooldown before every call
+    await _throttle()
+
     async with httpx.AsyncClient(timeout=120) as client:
         resp = await client.post(
             f"{OPENROUTER_BASE}/chat/completions",
             headers=_headers(),
             json=body,
         )
+        if resp.status_code == 429:
+            # Pause every caller for 60s, then let tenacity retry this one
+            _trip_429_pause()
+            log.warning("llm.rate_limited_429", model=model)
         resp.raise_for_status()
         data = resp.json()
         content = data["choices"][0]["message"]["content"]

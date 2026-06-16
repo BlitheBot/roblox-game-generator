@@ -24,6 +24,7 @@ log = structlog.get_logger()
 BUILD_FAILURE_RATE_LIMIT = 0.50
 BUILD_FAILURE_MIN_BUILDS = 2
 WEEKLY_SPEND_LIMIT_USD = 15.0
+DAILY_SPEND_LIMIT_USD = 10.0
 REVENUE_SPIKE_ROBUX = 10_000
 ALERT_COOLDOWN_HOURS = 24
 DISCORD_CONTENT_LIMIT = 2000
@@ -143,6 +144,7 @@ class DiscordReporter:
         for check in (
             self._check_build_failure_rate,
             self._check_openrouter_spend,
+            self._check_daily_llm_spend,
             self._check_tos_flags,
             self._check_revenue_spikes,
         ):
@@ -195,6 +197,25 @@ class DiscordReporter:
                 f"(limit ${WEEKLY_SPEND_LIMIT_USD:.0f})."
             )
             await self._mark_alerted("openrouter_spend")
+
+    async def _check_daily_llm_spend(self) -> None:
+        """FIX 7: if OpenRouter spend exceeds $10 in 24h, alert and pause the
+        orchestrator (operator resumes with !resume after review)."""
+        async with self._pool.acquire() as conn:
+            spend = await conn.fetchval(
+                """
+                SELECT COALESCE(SUM(cost_usd), 0) FROM llm_spend
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+                """
+            )
+        if spend > DAILY_SPEND_LIMIT_USD and await self._cooldown_ok("daily_llm_spend"):
+            await self._set_state("paused", "true")
+            await self.alert(
+                f"⛔ OpenRouter spend is ${spend:.2f} in the last 24h "
+                f"(limit ${DAILY_SPEND_LIMIT_USD:.0f}). Builds paused — review "
+                f"and `!resume` when ready."
+            )
+            await self._mark_alerted("daily_llm_spend")
 
     async def _check_tos_flags(self) -> None:
         """Alert on new TOS-flagged builds since the last cursor position."""

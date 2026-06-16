@@ -8,6 +8,7 @@ Retry policy (spec 4.6): up to 3 attempts with Claude Sonnet (error
 context appended each retry), then escalate to Claude Fable and restart
 from LuauAgent. All failures logged to build_failures.
 """
+import asyncio
 import pathlib
 import uuid
 from dataclasses import dataclass
@@ -30,6 +31,10 @@ log = structlog.get_logger()
 
 RETRIES_PER_MODEL = 3
 MODEL_LADDER = [CLAUDE_SONNET, CLAUDE_FABLE]
+
+# FIX 7: only one full build pipeline may run at a time (memory + OpenRouter
+# rate-limit safety). Concurrent run() calls queue on this process-wide lock.
+_BUILD_LOCK = asyncio.Lock()
 
 
 @dataclass
@@ -59,10 +64,15 @@ class BuildPipeline:
     async def run(
         self, concept_id: str, meta_keywords: list[str] | None = None
     ) -> BuildOutput | None:
-        """
-        Runs the full L2 pipeline for a queued concept.
-        Returns BuildOutput on success, None after exhausting all retries.
-        """
+        """Runs the full L2 pipeline for a queued concept, serialized so only
+        one build executes at a time. Returns BuildOutput on success, None
+        after exhausting all retries."""
+        async with _BUILD_LOCK:
+            return await self._run_locked(concept_id, meta_keywords)
+
+    async def _run_locked(
+        self, concept_id: str, meta_keywords: list[str] | None = None
+    ) -> BuildOutput | None:
         await self._set_status(concept_id, "building")
         game_id = str(uuid.uuid4())
 
