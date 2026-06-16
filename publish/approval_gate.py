@@ -89,14 +89,30 @@ class ApprovalGate:
         ).strip() or "(no summary available)"
         game_title = concept.get("game_title", "Untitled")
 
+        # Improvement 1: surface the playtest verdict in the approval preview.
+        pt = output.playtest or {}
+        playtest_score = float(pt.get("score")) if pt.get("score") is not None else None
+        playtest_summary = None
+        if pt:
+            playtest_summary = (
+                f"🎮 Playtest: {pt.get('score')}/10 | "
+                f"Economy: {pt.get('economy_balance')} | "
+                f"New player: {pt.get('new_player_experience')} | "
+                f"Monetization: {pt.get('monetization_pressure')}\n"
+                f"Verdict: {pt.get('verdict')}"
+            )
+            summary = f"{summary}\n{playtest_summary}"
+
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO pending_approvals
                     (game_id, concept_id, game_title, summary, build_dir, genre,
-                     status, decided_at, rbxl_path, thumbnail_path, description)
+                     status, decided_at, rbxl_path, thumbnail_path, description,
+                     playtest_score, playtest_summary)
                 VALUES ($1, $2, $3, $4, $5, $6, $7,
-                        CASE WHEN $7 = 'approved' THEN NOW() END, $8, $9, $10)
+                        CASE WHEN $7 = 'approved' THEN NOW() END, $8, $9, $10,
+                        $11, $12)
                 ON CONFLICT (game_id) DO NOTHING
                 """,
                 uuid.UUID(output.game_id),
@@ -109,6 +125,8 @@ class ApprovalGate:
                 str(output.rbxl_path),
                 str(output.thumbnail_path),
                 output.description,
+                playtest_score,
+                playtest_summary,
             )
 
         if not supervised:

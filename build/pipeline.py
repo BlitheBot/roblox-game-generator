@@ -27,6 +27,7 @@ from .auto_validator import AutoValidator
 from .concept_generator import ConceptGenerator
 from .decoration_pass import DecorationPass
 from .luau_agent import LuauAgent
+from .playtester_agent import PlaytesterAgent, PlaytestRejected
 from .rojo_builder import RojoBuilder
 from .toolbox_resolver import ToolboxAssetResolver
 
@@ -54,6 +55,7 @@ class BuildOutput:
     description: str
     concept: dict
     tos_flagged: bool = False
+    playtest: dict | None = None  # Improvement 1: PlaytesterAgent result
 
 
 class BuildPipeline:
@@ -73,6 +75,7 @@ class BuildPipeline:
         self._decoration = DecorationPass()
         self._assets = AssetGenerator()
         self._validator = AutoValidator()
+        self._playtester = PlaytesterAgent()
 
     async def run(
         self, concept_id: str, meta_keywords: list[str] | None = None
@@ -140,6 +143,49 @@ class BuildPipeline:
             await self._set_status(concept_id, "failed")
             return None
 
+        # First build pass (model ladder + validation + playtest)
+        try:
+            output = await self._build_with_retries(
+                concept, concept_id, game_id, meta_keywords
+            )
+        except TOSViolation as exc:
+            await self._discard_tos(concept_id, exc)
+            return None
+        except PlaytestRejected as exc:
+            # Improvement 1: score < 4.0 — discard the concept entirely.
+            await self._log_failure(
+                concept_id, "playtest_failed",
+                f"Score {exc.result.score}: {exc.result.verdict}", "playtester", 0,
+            )
+            await self._set_status(concept_id, "failed")
+            log.error("pipeline.playtest_discard", concept_id=concept_id, score=exc.result.score)
+            return None
+
+        if output is None:
+            await self._set_status(concept_id, "failed")
+            log.error("pipeline.exhausted_retries", concept_id=concept_id)
+            return None
+
+        # Improvement 1: playtest-driven regenerate-once. A mediocre game
+        # (4.0-5.9) gets one concept regeneration with the playtester's
+        # recommendations + a rebuild; keep whichever build scores higher.
+        output = await self._maybe_regenerate_for_playtest(
+            output, concept_id, meta_keywords
+        )
+        await self._store_playtest_result(concept_id, output.playtest)
+        return output
+
+    async def _build_with_retries(
+        self,
+        concept: dict,
+        concept_id: str,
+        game_id: str,
+        meta_keywords: list[str] | None,
+    ) -> BuildOutput | None:
+        """Run the model ladder (Sonnet→Opus, 3 attempts each) until a build
+        validates and playtests >= 4.0. Returns None on retry exhaustion.
+        TOSViolation / PlaytestRejected propagate to the caller for permanent
+        discard (never retried, never escalated)."""
         error_context: str | None = None
         for model in MODEL_LADDER:
             for attempt in range(1, RETRIES_PER_MODEL + 1):
@@ -147,12 +193,8 @@ class BuildPipeline:
                     output = await self._attempt_build(
                         concept, concept_id, game_id, model, error_context, meta_keywords
                     )
-                except TOSViolation as exc:
-                    # Bug 1: a TOS hit in the generated build is a content
-                    # issue, not a code-quality one. Discard immediately —
-                    # do NOT add to the retry ladder, do NOT escalate models.
-                    await self._discard_tos(concept_id, exc)
-                    return None
+                except (TOSViolation, PlaytestRejected):
+                    raise
                 except Exception as exc:
                     error_context = str(exc)[:2000]
                     await self._log_failure(concept_id, "build_attempt", error_context, model, attempt)
@@ -168,10 +210,68 @@ class BuildPipeline:
                 concept_id=concept_id,
                 from_model=model,
             )
-
-        await self._set_status(concept_id, "failed")
-        log.error("pipeline.exhausted_retries", concept_id=concept_id)
         return None
+
+    async def _maybe_regenerate_for_playtest(
+        self, output: BuildOutput, concept_id: str, meta_keywords: list[str] | None
+    ) -> BuildOutput:
+        """Improvement 1: if the playtest scored 4.0-5.9, regenerate the
+        concept with the recommendations and rebuild once. Keeps the original
+        build if the rebuild can't beat it or fails."""
+        pt = output.playtest
+        if not pt or pt.get("score", 10) >= 6.0:
+            return output
+        feedback = "; ".join(pt.get("recommendations") or []) or pt.get("verdict", "")
+        log.info(
+            "pipeline.playtest_regenerate",
+            concept_id=concept_id,
+            score=pt.get("score"),
+            feedback=feedback[:300],
+        )
+        try:
+            improved = await self._concept_gen.generate(
+                self._pool, concept_id, feedback=feedback
+            )
+            improved = await self._resolver.resolve(improved)
+            improved = await self._verifier.verify_concept_assets(improved)
+            from .cross_promotion import get_siblings
+
+            improved["cross_promo_siblings"] = await get_siblings(
+                self._pool, improved.get("target_genre_account") or "sim"
+            )
+            retry = await self._build_with_retries(
+                improved, concept_id, str(uuid.uuid4()), meta_keywords
+            )
+        except (TOSViolation, PlaytestRejected):
+            # Regenerated concept is unpublishable — keep the original build.
+            return output
+        except Exception as exc:
+            log.warning("pipeline.playtest_regenerate_failed", error=str(exc))
+            return output
+        if retry is not None and (retry.playtest or {}).get("score", 0) >= pt.get("score", 0):
+            return retry
+        return output
+
+    async def _store_playtest_result(self, concept_id: str, playtest: dict | None) -> None:
+        """Persist the playtest result on the concept_queue row (Improvement 1)."""
+        if not playtest:
+            return
+        import json
+
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE concept_queue
+                    SET playtest_score = $2, playtest_json = $3
+                    WHERE id = $1
+                    """,
+                    uuid.UUID(concept_id),
+                    float(playtest.get("score", 0)),
+                    json.dumps(playtest),
+                )
+        except Exception as exc:
+            log.warning("pipeline.store_playtest_failed", error=str(exc))
 
     async def _concept_quality_gate(self, concept: dict) -> tuple[bool, str]:
         """Section 10: final quality check before spending tokens on code
@@ -274,6 +374,12 @@ class BuildPipeline:
             )
             return None
 
+        # Improvement 1: playtest before spending tokens on thumbnail/description
+        # assets. A score < 4.0 raises PlaytestRejected → permanent discard.
+        playtest = await self._playtester.run(concept, build_dir)
+        if playtest.score < 4.0:
+            raise PlaytestRejected(playtest)
+
         assets = await self._assets.generate_all(concept, build_dir, meta_keywords)
 
         assert rojo_result.rbxl_path is not None
@@ -286,6 +392,7 @@ class BuildPipeline:
             icon_path=assets["icon"],
             description=assets["description"],
             concept=concept,
+            playtest=playtest.to_json(),
         )
 
     async def _set_status(self, concept_id: str, status: str) -> None:
