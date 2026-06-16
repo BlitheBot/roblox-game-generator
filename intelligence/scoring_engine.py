@@ -18,6 +18,7 @@ from .trend_predictor import PreArrivalTrend, TrendPredictorResult
 from .mechanic_mapper import MappedSignal
 from .gap_analyzer import GapAnalysisResult
 from .seasonal_context import SEASONAL_BOOST, get_seasonal_context
+from .seasonal_calendar import get_seasonal_boost_for_mechanic
 from util.tos import scan_for_blocked_term
 
 log = structlog.get_logger()
@@ -144,6 +145,19 @@ class ScoringEngine:
                     "scoring_engine.seasonal_boost",
                     mechanic=tag,
                     season=season.name,
+                )
+
+            # Improvement 6: forward-looking per-mechanic boost from the
+            # seasonal calendar (1.0 off-season; half-strength for an event
+            # still in its prep window). Lets the system lean into a season
+            # before it fully arrives.
+            calendar_boost = get_seasonal_boost_for_mechanic(tag)
+            if calendar_boost != 1.0:
+                opportunity_score *= calendar_boost
+                log.debug(
+                    "scoring_engine.calendar_boost",
+                    mechanic=tag,
+                    boost=round(calendar_boost, 3),
                 )
 
             opportunity_score = min(1.0, opportunity_score)

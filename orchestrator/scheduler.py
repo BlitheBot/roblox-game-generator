@@ -271,6 +271,19 @@ class Orchestrator:
             coalesce=True,
         )
 
+        # Improvement 6: seasonal preparation alerts — daily 07:00. Alerts at
+        # 35/21/14/7 days before each calendar event so seasonal games are
+        # built in advance of the peak.
+        self._scheduler.add_job(
+            self._run_seasonal_prep_alert,
+            trigger=CronTrigger(hour=7, minute=0),
+            id="seasonal_prep_alert",
+            name="Seasonal Preparation Alert",
+            replace_existing=True,
+            misfire_grace_time=3600,
+            coalesce=True,
+        )
+
         # Seasonal reskin revert check — daily 06:00
         self._scheduler.add_job(
             self._run_seasonal_reverts,
@@ -773,6 +786,16 @@ class Orchestrator:
             await pipeline.run_weekly_cycle(await self._get_meta_keywords())
         except Exception as exc:
             await self._log_job_crash("liveops_weekly", exc)
+
+    async def _run_seasonal_prep_alert(self) -> None:
+        """Improvement 6: alert ahead of upcoming seasonal calendar events."""
+        assert self._pool and self._reporter
+        try:
+            from intelligence.seasonal_calendar import SeasonalPreparationAlert
+
+            await SeasonalPreparationAlert().check_and_alert(self._pool, self._reporter)
+        except Exception as exc:
+            await self._log_job_crash("seasonal_prep_alert", exc)
 
     async def _run_seasonal_reverts(self) -> None:
         assert self._pool

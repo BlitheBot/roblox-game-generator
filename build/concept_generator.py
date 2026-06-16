@@ -12,6 +12,7 @@ import structlog
 from intelligence.llm_client import DEEPSEEK_V3, chat_json
 from intelligence.name_blacklist import check_similarity, get_blacklist
 from intelligence.seasonal_context import get_seasonal_context
+from intelligence.seasonal_calendar import get_seasonal_concept_context
 from util.tos import TOSViolation, scan_for_blocked_term
 
 log = structlog.get_logger()
@@ -126,6 +127,17 @@ class ConceptGenerator:
             if season.is_seasonal
             else ""
         )
+        # Improvement 6: forward-looking seasonal calendar — when an event is
+        # active or within its 21-day prep window, inject its themes/style so
+        # games are ready before the seasonal peak.
+        cal = get_seasonal_concept_context()
+        if cal["is_seasonal"] and cal["urgency"] in ("high", "prepare"):
+            season_note += (
+                f"Upcoming/active seasonal event: {cal['event_name']} "
+                f"(urgency: {cal['urgency']}). Lean into these themes where they "
+                f"fit the mechanic: {', '.join(cal['themes'])}. "
+                f"Thumbnail style guidance: {cal['thumbnail_style']}.\n"
+            )
         feedback_note = (
             f"\nThe previous attempt was rejected by the quality gate: {feedback}. "
             f"Fix this specifically in your new concept.\n"
