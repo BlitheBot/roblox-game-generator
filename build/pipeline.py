@@ -92,6 +92,33 @@ class BuildPipeline:
 
         try:
             concept = await self._concept_gen.generate(self._pool, concept_id)
+            # Section 10: concept quality gate before spending tokens on code.
+            # One regeneration with the failure reason, then discard if it
+            # still fails — never build a game from a twice-failing concept.
+            passes, reason = await self._concept_quality_gate(concept)
+            if not passes:
+                log.warning(
+                    "pipeline.concept_quality_gate_failed",
+                    concept_id=concept_id,
+                    attempt=1,
+                    reason=reason,
+                )
+                concept = await self._concept_gen.generate(
+                    self._pool, concept_id, feedback=reason
+                )
+                passes, reason = await self._concept_quality_gate(concept)
+                if not passes:
+                    log.warning(
+                        "pipeline.concept_quality_gate_failed",
+                        concept_id=concept_id,
+                        attempt=2,
+                        reason=reason,
+                    )
+                    await self._log_failure(
+                        concept_id, "concept_quality_gate", reason, "deepseek", 0
+                    )
+                    await self._set_status(concept_id, "failed")
+                    return None
             concept = await self._resolver.resolve(concept)
             # FIX 5: drop any resolved asset that is no longer free/available
             # before it gets baked into Config (fails open on API errors)
@@ -145,6 +172,50 @@ class BuildPipeline:
         await self._set_status(concept_id, "failed")
         log.error("pipeline.exhausted_retries", concept_id=concept_id)
         return None
+
+    async def _concept_quality_gate(self, concept: dict) -> tuple[bool, str]:
+        """Section 10: final quality check before spending tokens on code
+        generation. Returns (passes, reason)."""
+        # Check 1: title quality
+        title = concept.get("game_title", "")
+        if len(title.split()) > 5:
+            return False, f"Title too long: '{title}' — Roblox titles should be 2-4 words"
+        if len(title) < 3:
+            return False, f"Title too short: '{title}'"
+
+        # Check 2: core loop is specific enough
+        core_loop = concept.get("core_loop", "")
+        if len(core_loop) < 30:
+            return False, "Core loop description too vague — needs more specific gameplay detail"
+
+        # Check 3: has at least 3 systems
+        systems = concept.get("systems", [])
+        if len(systems) < 3:
+            return False, f"Only {len(systems)} systems defined — needs at least 3 for a complete game"
+
+        # Check 4: monetization is complete
+        monetization = concept.get("monetization", {})
+        if not monetization.get("game_passes"):
+            return False, "No game passes defined — monetization is incomplete"
+        if not monetization.get("currency_name"):
+            return False, "No currency name defined"
+
+        # Check 5: toolbox keywords are specific enough
+        keywords = concept.get("toolbox_keywords", [])
+        if len(keywords) < 4:
+            return False, f"Only {len(keywords)} toolbox keywords — needs at least 4 for good asset coverage"
+
+        # Check 6: no generic placeholder values survived. Scan the JSON form
+        # (double-quoted) so the exact-token match actually fires.
+        import json
+
+        concept_str = json.dumps(concept)
+        generic_values = ["Item", "Thing", "Object", "Unnamed", "Default", "Example"]
+        for generic in generic_values:
+            if f'"{generic}"' in concept_str:
+                return False, f"Generic placeholder value '{generic}' found in concept — LLM failed to theme properly"
+
+        return True, "ok"
 
     async def _discard_tos(self, concept_id: str, exc: TOSViolation) -> None:
         """Bug 1: permanently discard a TOS-flagged concept. Marks it failed,

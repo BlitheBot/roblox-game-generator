@@ -104,7 +104,10 @@ def make_concept(mechanic: str) -> dict:
             ],
             "vip_server": True,
         },
-        "toolbox_keywords": ["low poly tree", "wooden pier", "treasure chest"],
+        "toolbox_keywords": [
+            "low poly tree", "wooden pier", "treasure chest",
+            "island palm", "fishing boat", "wooden crate",
+        ],
         "target_genre_account": "idle",
     }
 

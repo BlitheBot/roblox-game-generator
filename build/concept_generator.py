@@ -103,7 +103,12 @@ TIER_PRICES = {
 class ConceptGenerator:
     """Turns a queued concept row into a buildable game concept."""
 
-    async def generate(self, pool: asyncpg.Pool, concept_id: str) -> dict:
+    async def generate(
+        self, pool: asyncpg.Pool, concept_id: str, feedback: str | None = None
+    ) -> dict:
+        """Expand a queued seed into a full concept. `feedback` (the concept
+        quality gate's failure reason, Section 10) is appended to the prompt on
+        a regeneration so the model can correct the specific shortcoming."""
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT concept_json, genre, mechanic_tag FROM concept_queue WHERE id = $1",
@@ -121,6 +126,12 @@ class ConceptGenerator:
             if season.is_seasonal
             else ""
         )
+        feedback_note = (
+            f"\nThe previous attempt was rejected by the quality gate: {feedback}. "
+            f"Fix this specifically in your new concept.\n"
+            if feedback
+            else ""
+        )
 
         messages = [
             {
@@ -134,6 +145,7 @@ class ConceptGenerator:
                     "Toolbox models matching the theme. "
                     "Avoid any weapons-realism, gore, or adult themes (TOS-safe). "
                     + season_note
+                    + feedback_note
                     + f"Return JSON exactly matching this schema:\n{CONCEPT_SCHEMA_HINT}"
                 ),
             },
