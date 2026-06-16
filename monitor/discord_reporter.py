@@ -21,6 +21,13 @@ import structlog
 
 log = structlog.get_logger()
 
+
+def weekly_stat_key(name: str) -> str:
+    """orchestrator_state key for a per-ISO-week counter (self-scoping, no
+    reset job needed). Shared with the orchestrator's _bump_weekly_stat()."""
+    iso = datetime.now(timezone.utc).isocalendar()
+    return f"stat:{name}:{iso[0]}-W{iso[1]:02d}"
+
 BUILD_FAILURE_RATE_LIMIT = 0.50
 BUILD_FAILURE_MIN_BUILDS = 2
 WEEKLY_SPEND_LIMIT_USD = 15.0
@@ -110,6 +117,44 @@ class DiscordReporter:
                 """
             )
 
+            # ── Rate-limiting / publish summary (Section 9) ──────
+            per_account_rows = await conn.fetch(
+                """
+                SELECT genre_account, COUNT(*) AS c FROM published_games
+                WHERE published_at > NOW() - INTERVAL '7 days'
+                GROUP BY genre_account
+                """
+            )
+            concepts_generated = await conn.fetchval(
+                "SELECT COUNT(*) FROM concept_queue WHERE created_at > NOW() - INTERVAL '7 days'"
+            )
+            tos_rejected = await conn.fetchval(
+                """
+                SELECT COUNT(DISTINCT concept_id) FROM build_failures
+                WHERE stage = 'tos_flag' AND timestamp > NOW() - INTERVAL '7 days'
+                """
+            )
+            build_failures_week = await conn.fetchval(
+                """
+                SELECT COUNT(DISTINCT concept_id) FROM build_failures
+                WHERE stage NOT IN ('tos_flag') AND timestamp > NOW() - INTERVAL '7 days'
+                """
+            )
+            viability_rejected = await conn.fetchval(
+                "SELECT value FROM orchestrator_state WHERE key = $1",
+                weekly_stat_key("viability_rejected"),
+            )
+
+        from publish.rate_limiter import ACCOUNTS, _get_limits
+
+        limits = _get_limits()
+        per_account = {r["genre_account"]: r["c"] for r in per_account_rows}
+        published_week = sum(per_account.values())
+        next_week_capacity = sum(
+            max(0, limits["per_account_per_week"] - per_account.get(a, 0))
+            for a in ACCOUNTS
+        )
+
         lines = [
             "📊 **[RobloxStudio] Weekly Digest**",
             f"**Games live:** {live_count}",
@@ -134,6 +179,27 @@ class DiscordReporter:
             )
         else:
             lines.append("**Next top opportunity:** queue empty")
+
+        # ── Weekly publish summary ──────────────────────────────
+        lines.append("")
+        lines.append("📊 **Weekly Publish Summary:**")
+        lines.append(
+            f"Games published this week: {published_week}/{limits['max_per_week_all_accounts']}"
+        )
+        for account in ACCOUNTS:
+            lines.append(
+                f"  • {account} account: {per_account.get(account, 0)}/{limits['per_account_per_week']}"
+            )
+        lines.append(f"Concepts generated: {concepts_generated or 0}")
+        lines.append(f"Concepts rejected (TOS): {tos_rejected or 0}")
+        lines.append(f"Concepts rejected (viability): {int(viability_rejected or 0)}")
+        lines.append(f"Build failures: {build_failures_week or 0}")
+        lines.append(f"Next week capacity: {next_week_capacity} games")
+        if top_opportunity:
+            lines.append(
+                f"Best opportunity genre: {top_opportunity['genre']} "
+                f"({top_opportunity['mechanic_tag']})"
+            )
 
         await self._post("\n".join(lines))
         log.info("discord.weekly_digest_sent", games=live_count)

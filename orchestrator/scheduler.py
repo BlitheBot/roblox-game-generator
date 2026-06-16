@@ -432,6 +432,10 @@ class Orchestrator:
                 self._pool, consecutive_rejects + 1
             )
 
+        # Weekly digest stat: how many scored concepts the gate rejected this
+        # ISO week (the only digest figure not derivable from a table).
+        await self._bump_weekly_stat("viability_rejected", len(gate_result.rejected))
+
         if gate_result.fallback_triggered and scored:
             await self._discord_alert(
                 f"Viability gate in fallback mode — threshold lowered to "
@@ -899,6 +903,29 @@ class Orchestrator:
                 """,
                 key,
                 value,
+            )
+
+    async def _bump_weekly_stat(self, name: str, n: int) -> None:
+        """Increment a per-ISO-week counter in orchestrator_state. Each week
+        gets its own key (stat:<name>:<YYYY-Www>) so it self-scopes — the
+        weekly digest reads the current week's value without any reset job."""
+        if n <= 0:
+            return
+        assert self._pool
+        from monitor.discord_reporter import weekly_stat_key
+
+        key = weekly_stat_key(name)
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO orchestrator_state (key, value, updated_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (key) DO UPDATE
+                    SET value = (COALESCE(orchestrator_state.value, '0')::int + $2::int)::text,
+                        updated_at = NOW()
+                """,
+                key,
+                str(n),
             )
 
     # ─────────────────────────────────────────────────────────
