@@ -156,6 +156,7 @@ class ApprovalGate:
                     game_id=str(row["game_id"]),
                     error=str(exc),
                 )
+                await self._log_publish_failure(row["concept_id"], str(exc))
                 # A swallowed exception here was the silent-publish bug: the
                 # operator was told "publishing soon" and never heard again.
                 await self._reporter.alert(
@@ -237,6 +238,25 @@ class ApprovalGate:
             )
         return f"✅ Re-published **{row['game_title']}**."
 
+    async def _log_publish_failure(self, concept_id, error: str) -> None:
+        """FIX 1: record a publish-stage failure to build_failures so it shows
+        up in the failure-rate alert and the audit trail, not just the log."""
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO build_failures
+                        (id, concept_id, timestamp, stage, error_message,
+                         model_used, retry_count)
+                    VALUES ($1, $2, NOW(), 'publish', $3, 'opencloud', 0)
+                    """,
+                    uuid.uuid4(),
+                    concept_id,
+                    str(error)[:4000],
+                )
+        except Exception as exc:
+            log.warning("approval_gate.publish_failure_log_failed", error=str(exc))
+
     async def _state_get(self, key: str) -> str | None:
         async with self._pool.acquire() as conn:
             return await conn.fetchval(
@@ -287,6 +307,15 @@ class ApprovalGate:
             )
             return
 
+        log.info(
+            "approval_gate.processing", game_id=str(row["game_id"]), title=row["game_title"]
+        )
+        log.info(
+            "approval_gate.publishing",
+            game_id=str(row["game_id"]),
+            title=row["game_title"],
+            genre=row["genre"],
+        )
         result = await publisher.publish(
             concept_id=str(row["concept_id"]),
             rbxl_path=pathlib.Path(row["rbxl_path"]),
@@ -300,9 +329,16 @@ class ApprovalGate:
             log.info("approval_gate.publish_deferred", game_id=str(row["game_id"]))
             return
         if not result.success:
+            log.error(
+                "approval_gate.publish_failed",
+                game_id=str(row["game_id"]),
+                error=result.error,
+            )
+            await self._log_publish_failure(row["concept_id"], result.error or "unknown")
             await self._reporter.alert(
                 f"Publish failed for approved game **{row['game_title']}**: "
-                f"{result.error}. Row marked processed — re-approve manually to retry."
+                f"{result.error}. Logged to build_failures; fix the `{row['genre']}` "
+                f"account, then re-run the build to retry."
             )
             await self._mark_processed(row["game_id"])
             return
