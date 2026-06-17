@@ -9,6 +9,7 @@ context appended each retry), then escalate to Claude Opus and restart
 from LuauAgent. All failures logged to build_failures.
 """
 import asyncio
+import json
 import pathlib
 import uuid
 from dataclasses import dataclass
@@ -16,10 +17,11 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import asyncpg
+import httpx
 import structlog
 
 from intelligence.llm_client import CLAUDE_OPUS, CLAUDE_SONNET
-from util.tos import TOSViolation
+from util.tos import TOSViolation, scan_for_blocked_term
 
 from .asset_generator import AssetGenerator
 from .asset_verifier import AssetVerifier
@@ -67,6 +69,9 @@ class BuildPipeline:
         # Set when run() discards a concept for TOS content so the caller can
         # skip its generic "build failed" alert (the TOS alert already fired).
         self.last_tos_discard: tuple[str, str] | None = None
+        # Set when run() bailed on a transient rate limit (not a real failure)
+        # so the caller can skip the "build failed" alert.
+        self.last_transient_skip: bool = False
         self._concept_gen = ConceptGenerator()
         self._luau_agent = LuauAgent()
         self._resolver = ToolboxAssetResolver()
@@ -91,6 +96,7 @@ class BuildPipeline:
     ) -> BuildOutput | None:
         await self._set_status(concept_id, "building")
         self.last_tos_discard = None
+        self.last_transient_skip = False
         game_id = str(uuid.uuid4())
 
         try:
@@ -133,10 +139,33 @@ class BuildPipeline:
             concept["cross_promo_siblings"] = await get_siblings(
                 self._pool, concept.get("target_genre_account") or "sim"
             )
+            # Bug 1 (hardening): re-screen the FULLY enriched concept. The
+            # generation pre-screen runs before the toolbox resolver and
+            # cross-promo steps, which inject external asset names / sibling
+            # titles that can carry blocked terms (e.g. a toolbox model named
+            # "Shotgun Shell"). Catch them here so they never reach concept.json.
+            post_term = scan_for_blocked_term(json.dumps(concept))
+            if post_term:
+                raise TOSViolation(
+                    post_term, str(concept.get("game_title", "Untitled"))
+                )
         except TOSViolation as exc:
-            # Bug 1: the concept generator pre-screen caught blocked content.
+            # Bug 1: blocked content (pre-screen or post-enrichment re-screen).
             # Discard permanently — never retried, never escalated.
             await self._discard_tos(concept_id, exc)
+            return None
+        except httpx.HTTPStatusError as exc:
+            # A transient OpenRouter 429 during concept generation is rate
+            # limiting, not a real build failure — don't log a build_failures
+            # row or fire a "build failed" alert. The opportunity resurfaces as
+            # a fresh concept next cycle.
+            if exc.response is not None and exc.response.status_code == 429:
+                log.warning("pipeline.concept_gen_rate_limited", concept_id=concept_id)
+                self.last_transient_skip = True
+                await self._set_status(concept_id, "failed")
+                return None
+            await self._log_failure(concept_id, "concept_generation", str(exc), "deepseek", 0)
+            await self._set_status(concept_id, "failed")
             return None
         except Exception as exc:
             await self._log_failure(concept_id, "concept_generation", str(exc), "deepseek", 0)

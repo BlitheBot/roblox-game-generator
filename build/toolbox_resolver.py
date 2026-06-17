@@ -16,6 +16,8 @@ import pathlib
 import httpx
 import structlog
 
+from util.tos import scan_for_blocked_term
+
 log = structlog.get_logger()
 
 # Toolbox service category 10 = free Models
@@ -74,7 +76,22 @@ class ToolboxAssetResolver:
             if isinstance(result, Exception):
                 log.warning("toolbox.keyword_failed", keyword=keyword, error=str(result))
                 continue
-            resolved.extend(result)
+            for asset in result:
+                # A toolbox model's name comes from an arbitrary uploader and
+                # can carry TOS-blocked terms (e.g. "Shotgun Shell"). Drop it
+                # here so blocked text never lands in resolved_assets /
+                # concept.json — the generation pre-screen runs before
+                # resolution, so it can't catch these.
+                bad = scan_for_blocked_term(str(asset.get("name", "")))
+                if bad:
+                    log.warning(
+                        "toolbox.blocked_asset_dropped",
+                        keyword=keyword,
+                        asset=asset.get("name"),
+                        term=bad,
+                    )
+                    continue
+                resolved.append(asset)
 
         concept["resolved_assets"] = resolved
         log.info("toolbox.resolved", keywords=len(keywords), assets=len(resolved))

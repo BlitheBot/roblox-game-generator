@@ -542,6 +542,10 @@ class Orchestrator:
             # double-alert with the generic build-failure message.
             if pipeline.last_tos_discard is not None:
                 return
+            # A transient rate limit isn't an actionable build failure — the
+            # opportunity resurfaces next cycle, so stay quiet.
+            if pipeline.last_transient_skip:
+                return
             await self._discord_alert(
                 f"Build failed for concept {concept.concept_id} "
                 f"({concept.mechanic_tag}) after all retries — see build_failures table."
