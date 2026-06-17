@@ -16,8 +16,40 @@
 --]]
 
 local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
 
 local DesignSystem = {}
+
+-- ═══════════════════════════════════════
+-- DEVICE / RESPONSIVENESS
+-- ═══════════════════════════════════════
+function DesignSystem.isMobile()
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+end
+
+function DesignSystem.isSmallScreen()
+	local camera = workspace.CurrentCamera
+	if not camera then
+		return DesignSystem.isMobile()
+	end
+	local viewport = camera.ViewportSize
+	return viewport.X < 600 or viewport.Y < 400
+end
+
+-- Scale a desktop size down for small screens (keeps Scale components, shrinks
+-- the Offset components by mobileScale).
+function DesignSystem.getResponsiveSize(desktopSize, mobileScale)
+	if DesignSystem.isSmallScreen() then
+		local s = mobileScale or 0.85
+		return UDim2.new(
+			desktopSize.X.Scale,
+			math.floor(desktopSize.X.Offset * s),
+			desktopSize.Y.Scale,
+			math.floor(desktopSize.Y.Offset * s)
+		)
+	end
+	return desktopSize
+end
 
 -- ═══════════════════════════════════════
 -- TYPOGRAPHY
@@ -248,8 +280,16 @@ function DesignSystem.createButton(options)
 
 	local c = colors[style] or colors.primary
 
+	-- Enforce a minimum touch target (48px on mobile, 40px desktop) so buttons
+	-- are always tappable, regardless of the requested size.
+	local size = options.size or DesignSystem.ButtonSizes.MD
+	local minSize = DesignSystem.isMobile() and 48 or 40
+	if size.Y.Scale == 0 and size.Y.Offset < minSize then
+		size = UDim2.new(size.X.Scale, size.X.Offset, 0, minSize)
+	end
+
 	local button = Instance.new("TextButton")
-	button.Size = options.size or DesignSystem.ButtonSizes.MD
+	button.Size = size
 	button.Position = options.position or UDim2.new(0, 0, 0, 0)
 	button.BackgroundColor3 = c.bg
 	button.BackgroundTransparency = style == "ghost" and 1 or 0

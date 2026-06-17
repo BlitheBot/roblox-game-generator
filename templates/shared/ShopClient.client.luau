@@ -20,6 +20,15 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local DS = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DesignSystem"))
 DS.applyGenrePalette("{{MECHANIC_TAG}}")
 
+-- Responsive shop dimensions: near-fullscreen on phones, fixed on desktop.
+local function shopSize()
+	if DS.isSmallScreen() then
+		local vp = workspace.CurrentCamera.ViewportSize
+		return UDim2.new(0, math.min(560, math.floor(vp.X * 0.94)), 0, math.min(480, math.floor(vp.Y * 0.88)))
+	end
+	return UDim2.new(0, 560, 0, 480)
+end
+
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
@@ -82,12 +91,13 @@ backdrop.BorderSizePixel = 0
 backdrop.Parent = shopGui
 
 local mainPanel = DS.createPanel({
-	size = UDim2.new(0, 560, 0, 480),
-	position = UDim2.new(0.5, -280, 0.5, -240),
+	size = shopSize(),
+	position = UDim2.new(0.5, 0, 0.5, 0),
 	color = DS.Colors.BgDark,
 	shadow = true,
 	parent = shopGui,
 })
+mainPanel.AnchorPoint = Vector2.new(0.5, 0.5)
 mainPanel.ClipsDescendants = true
 
 local header = DS.createPanel({
@@ -150,9 +160,10 @@ itemScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 itemScroll.Parent = mainPanel
 
 local itemGrid = Instance.new("UIGridLayout")
-itemGrid.CellSize = UDim2.new(0, 156, 0, 180)
+-- Single full-width column on small screens, multi-column on desktop.
+itemGrid.CellSize = DS.isSmallScreen() and UDim2.new(1, -8, 0, 180) or UDim2.new(0, 156, 0, 180)
 itemGrid.CellPadding = UDim2.new(0, 8, 0, 8)
-itemGrid.HorizontalAlignment = Enum.HorizontalAlignment.Left
+itemGrid.HorizontalAlignment = Enum.HorizontalAlignment.Center
 itemGrid.Parent = itemScroll
 
 DS.createDivider(mainPanel, UDim2.new(0, 0, 0, 112))
@@ -321,8 +332,7 @@ local function openShop()
 	mainPanel.Size = UDim2.new(0, 0, 0, 0)
 	mainPanel.Position = UDim2.new(0.5, 0, 0.5, 0)
 	TweenService:Create(mainPanel, DS.Animations.Spring, {
-		Size = UDim2.new(0, 560, 0, 480),
-		Position = UDim2.new(0.5, -280, 0.5, -240),
+		Size = shopSize(),
 	}):Play()
 	setActiveTab("All")
 end

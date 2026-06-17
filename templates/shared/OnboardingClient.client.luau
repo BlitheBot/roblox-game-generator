@@ -50,13 +50,17 @@ onboardGui.DisplayOrder = 15
 onboardGui.Enabled = false
 onboardGui.Parent = playerGui
 
+-- Anchored bottom-center so positioning is width-independent (responsive).
+local CARD_SHOWN = UDim2.new(0.5, 0, 1, -20)
+local CARD_HIDDEN = UDim2.new(0.5, 0, 1, 140)
 local stepCard = DS.createPanel({
-	size = UDim2.new(0, 380, 0, 110),
-	position = UDim2.new(0.5, -190, 1, -130),
+	size = DS.getResponsiveSize(UDim2.new(0, 380, 0, 110), 0.9),
+	position = CARD_SHOWN,
 	color = DS.Colors.BgDark,
 	shadow = true,
 	parent = onboardGui,
 })
+stepCard.AnchorPoint = Vector2.new(0.5, 1)
 
 local accent = Instance.new("Frame")
 accent.Size = UDim2.new(0, 4, 1, 0)
@@ -176,9 +180,9 @@ function showStep(step)
 	stepDesc.Text = step.description or ""
 	updateDots(#steps, currentStep)
 
-	stepCard.Position = UDim2.new(0.5, -190, 1, 10)
+	stepCard.Position = CARD_HIDDEN
 	TweenService:Create(stepCard, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-		Position = UDim2.new(0.5, -190, 1, -130),
+		Position = CARD_SHOWN,
 	}):Play()
 
 	local target = findTarget(step.arrow_target)
@@ -207,7 +211,7 @@ function advanceStep()
 		return
 	end
 	TweenService:Create(stepCard, TweenInfo.new(0.2), {
-		Position = UDim2.new(0.5, -190, 1, 10),
+		Position = CARD_HIDDEN,
 	}):Play()
 	task.wait(0.25)
 	showStep(steps[currentStep])
@@ -222,7 +226,7 @@ function completeOnboarding()
 	arrowGui.Enabled = false
 
 	TweenService:Create(stepCard, TweenInfo.new(0.3), {
-		Position = UDim2.new(0.5, -190, 1, 10),
+		Position = CARD_HIDDEN,
 	}):Play()
 	task.delay(0.3, function()
 		onboardGui.Enabled = false

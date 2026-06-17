@@ -20,12 +20,19 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
 
 local DS = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("DesignSystem"))
 DS.applyGenrePalette("{{MECHANIC_TAG}}")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+
+-- This ScreenGui ignores the GUI inset, so add the top inset (notch / topbar)
+-- manually to keep top elements out of the mobile safe area.
+local topInset = GuiService:GetGuiInset().Y
+local topY = 12 + topInset
+local mobileScale = DS.isSmallScreen() and 0.85 or 1
 
 local hudGui = Instance.new("ScreenGui")
 hudGui.Name = "HUD"
@@ -50,8 +57,8 @@ end
 -- TOP LEFT — Currency
 -- ═══════════════════════════════════
 local currencyPanel = DS.createPanel({
-	size = UDim2.new(0, 168, 0, 44),
-	position = UDim2.new(0, 12, 0, 12),
+	size = DS.getResponsiveSize(UDim2.new(0, 168, 0, 44)),
+	position = UDim2.new(0, 12, 0, topY),
 	color = DS.Colors.BgMedium,
 	transparency = 0.05,
 	shadow = true,
@@ -131,8 +138,8 @@ end
 -- TOP RIGHT — Stats / status
 -- ═══════════════════════════════════
 local statsPanel = DS.createPanel({
-	size = UDim2.new(0, 168, 0, 44),
-	position = UDim2.new(1, -180, 0, 12),
+	size = DS.getResponsiveSize(UDim2.new(0, 168, 0, 44)),
+	position = UDim2.new(1, DS.isSmallScreen() and -155 or -180, 0, topY),
 	color = DS.Colors.BgMedium,
 	transparency = 0.05,
 	shadow = true,

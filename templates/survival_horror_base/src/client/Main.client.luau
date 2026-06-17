@@ -53,6 +53,22 @@ for i, mapName in Config.Maps do
 	end)
 end
 
+-- Mobile safe-area: on touch devices, nudge top-row UI clear of the notch/topbar.
+local GuiService = game:GetService("GuiService")
+local UserInputService = game:GetService("UserInputService")
+local function adjustForSafeArea(gui)
+	if gui.IgnoreGuiInset or not UserInputService.TouchEnabled then
+		return
+	end
+	local extra = math.min(GuiService:GetGuiInset().Y, 24)
+	for _, child in gui:GetChildren() do
+		if child:IsA("GuiObject") and child.Position.Y.Scale == 0 and child.Position.Y.Offset < 80 then
+			child.Position = child.Position + UDim2.fromOffset(0, extra)
+		end
+	end
+end
+adjustForSafeArea(screenGui)
+
 screenGui.Parent = playerGui
 
 RoundState.OnClientEvent:Connect(function(state)
