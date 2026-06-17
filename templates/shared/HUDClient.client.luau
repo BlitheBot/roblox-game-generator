@@ -255,6 +255,18 @@ addActionButton("🛒", "Shop", function()
 	end
 end)
 
+-- Invite friends via Roblox's native game-invite UI.
+local SocialService = game:GetService("SocialService")
+addActionButton("👥", "Invite", function()
+	task.spawn(function()
+		pcall(function()
+			if SocialService:CanSendGameInviteAsync(player) then
+				SocialService:PromptGameInvite(player)
+			end
+		end)
+	end)
+end)
+
 -- ═══════════════════════════════════
 -- NOTIFICATIONS
 -- ═══════════════════════════════════
@@ -392,6 +404,29 @@ local function safeServerCall(remoteEvent, ...)
 		showNotification("Connection Issue", "Something went wrong. Please try again.", "error")
 	end
 end
+
+-- Friends-in-server indicator: notify (once per change) when friends are here.
+task.spawn(function()
+	local lastCount = 0
+	while true do
+		task.wait(45)
+		local count = 0
+		local ok, pages = pcall(function()
+			return Players:GetFriendsAsync(player.UserId)
+		end)
+		if ok and pages then
+			for _, friendData in ipairs(pages:GetCurrentPage()) do
+				if Players:GetPlayerByUserId(friendData.Id) then
+					count += 1
+				end
+			end
+		end
+		if count > 0 and count ~= lastCount then
+			showNotification("Friends Online!", count .. " of your friends are in this server!", "info")
+		end
+		lastCount = count
+	end
+end)
 
 return {
 	showNotification = showNotification,
