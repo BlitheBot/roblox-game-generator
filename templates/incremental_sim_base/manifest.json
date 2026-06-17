@@ -45,6 +45,8 @@
         "src/server/ReturnIncentiveService.luau",
         "src/server/ReturnIncentive.server.luau",
         "src/client/ReturnMessagesUI.client.luau",
-        "src/server/DynamicDifficulty.server.luau"
+        "src/server/DynamicDifficulty.server.luau",
+        "src/server/TutorialGate.server.luau",
+        "src/StarterGui/Tutorial.client.luau"
     ]
 }

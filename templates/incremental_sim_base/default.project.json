@@ -9,7 +9,8 @@
                 "RequestAction": { "$className": "RemoteEvent" },
                 "StateChanged": { "$className": "RemoteEvent" },
                 "SocialProofAnnouncement": { "$className": "RemoteEvent" },
-                "ReturnMessages": { "$className": "RemoteEvent" }
+                "ReturnMessages": { "$className": "RemoteEvent" },
+                "TutorialComplete": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": { "$className": "Folder" }
         },
