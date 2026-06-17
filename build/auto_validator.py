@@ -30,6 +30,16 @@ MAX_SCRIPT_BYTES = 200 * 1024
 _RANGE_RE = re.compile(r"\.Range\s*=\s*(\d+)")
 _RATE_RE = re.compile(r"\.Rate\s*=\s*(\d+)")
 
+# Visual-standards scans (hard failures). These are written to match only
+# genuine offences — a Font *assignment* to a banned face, or a *background*
+# painted pure white — so legitimate uses (white text, or UIPolish comparing
+# against the fonts it replaces) never trip them.
+_BANNED_FONT_RE = re.compile(r"Font\s*=\s*Enum\.Font\.(Arial|Legacy|SourceSans)\b")
+_WHITE_BG_RE = re.compile(
+    r"BackgroundColor3\s*=\s*(?:Color3\.fromRGB\(\s*255\s*,\s*255\s*,\s*255\s*\)"
+    r"|Color3\.new\(\s*1\s*,\s*1\s*,\s*1\s*\))"
+)
+
 # TOS keyword scan — the canonical blocked-terms list lives in util.tos
 # (shared with the concept generator and viability gate, Bug 1). BLOCKED_TERMS
 # is re-exported above for callers that still reference it here.
@@ -100,6 +110,11 @@ class AutoValidator:
         vq_failures, vq_warnings = self._check_visual_quality(build_dir)
         failures.extend(vq_failures)
         warnings.extend(vq_warnings)
+
+        # Check 8: visual design-system standards (hard failures) — every game
+        # must ship the shared DesignSystem, a loading screen and a HUD, and
+        # must avoid unprofessional default fonts / pure-white backgrounds.
+        failures.extend(self.check_visual_standards(build_dir))
 
         result = ValidationResult(
             passed=not failures,
@@ -261,6 +276,59 @@ class AutoValidator:
             warnings.append(f"Found {rate_over} ParticleEmitter Rate value(s) > 50 — caps perf")
 
         return failures, warnings
+
+    def check_visual_standards(self, build_dir: pathlib.Path) -> list[str]:
+        """Enforce the universal design-system standards (PART 7).
+
+        Hard failures: a game missing the shared DesignSystem, a loading screen
+        or a HUD looks unfinished or inconsistent; banned default fonts and
+        pure-white backgrounds read as amateur. Scans run against the real build
+        layout (Shared modules under src/shared, client UI under src/client,
+        loading under src/StarterGui)."""
+        failures: list[str] = []
+
+        all_scripts = list(build_dir.rglob("*.luau"))
+        names = [f.name.lower() for f in all_scripts]
+
+        # DesignSystem must ship in ReplicatedStorage.Shared (src/shared).
+        has_design_system = (
+            build_dir / "src" / "shared" / "DesignSystem.luau"
+        ).exists() or any(
+            f.name == "DesignSystem.luau" and f.parent.name == "shared"
+            for f in all_scripts
+        )
+        if not has_design_system:
+            failures.append(
+                "Missing DesignSystem — UI will be inconsistent and unpolished"
+            )
+
+        # Loading screen (players otherwise see a raw baseplate on join).
+        if not any("loading" in n for n in names):
+            failures.append(
+                "Missing LoadingScreen — players see raw baseplate on join"
+            )
+
+        # HUD (currency / stats display).
+        if not any("hud" in n for n in names):
+            failures.append(
+                "Missing HUD — players have no currency or stats display"
+            )
+
+        # Banned fonts + pure-white backgrounds.
+        for f in all_scripts:
+            content = f.read_text(encoding="utf-8", errors="replace")
+            font_match = _BANNED_FONT_RE.search(content)
+            if font_match:
+                failures.append(
+                    f"{f.name}: assigns unprofessional default font "
+                    f"Enum.Font.{font_match.group(1)} — use DesignSystem.Fonts"
+                )
+            if _WHITE_BG_RE.search(content):
+                failures.append(
+                    f"{f.name}: has a pure-white background — use DesignSystem colors"
+                )
+
+        return failures
 
     @staticmethod
     def _check_project_json(build_dir: pathlib.Path) -> list[str]:
