@@ -235,9 +235,14 @@ class ApprovalGate:
                 await self._log_publish_failure(row["concept_id"], str(exc))
 
     async def alert_stuck_rows(self) -> None:
-        """Spec/FIX 1: alert when a row has been approved but unpublished for
-        more than STUCK_PUBLISH_MINUTES, deduped per game via
-        orchestrator_state so the operator hears about it exactly once."""
+        """Spec/FIX 1: alert when a row is genuinely stuck — approved, due to
+        publish, and still unpublished past STUCK_PUBLISH_MINUTES. Deduped per
+        game via orchestrator_state so the operator hears about it once.
+
+        A row with a future scheduled_publish_after is intentionally held by
+        the PublishRateLimiter (anti-ban spacing), not stuck — so the SLA clock
+        is the schedule time when present, else the approval time. The row only
+        counts as stuck once it's actually eligible to publish but hasn't."""
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=STUCK_PUBLISH_MINUTES)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
@@ -246,7 +251,7 @@ class ApprovalGate:
                 WHERE status = 'approved'
                   AND processed_at IS NULL
                   AND decided_at IS NOT NULL
-                  AND decided_at < $1
+                  AND COALESCE(scheduled_publish_after, decided_at) < $1
                 """,
                 cutoff,
             )
