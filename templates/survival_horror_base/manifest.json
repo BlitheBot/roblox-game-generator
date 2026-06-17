@@ -39,6 +39,13 @@
         "src/server/MonetizationService.server.luau",
         "src/client/MonetizationUI.client.luau",
         "src/StarterGui/LoadingScreen.client.luau",
-        "src/client/GameFeel.client.luau"
+        "src/client/GameFeel.client.luau",
+        "src/server/SocialProofService.luau",
+        "src/server/SocialProof.server.luau",
+        "src/client/SocialProofClient.client.luau",
+        "src/server/ReturnIncentiveService.luau",
+        "src/server/ReturnIncentive.server.luau",
+        "src/client/ReturnMessagesUI.client.luau",
+        "src/server/DynamicDifficulty.server.luau"
     ]
 }

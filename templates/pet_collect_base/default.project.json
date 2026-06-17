@@ -9,7 +9,9 @@
                 "RequestHatch": { "$className": "RemoteEvent" },
                 "RequestEquip": { "$className": "RemoteEvent" },
                 "RequestTrade": { "$className": "RemoteEvent" },
-                "StateChanged": { "$className": "RemoteEvent" }
+                "StateChanged": { "$className": "RemoteEvent" },
+                "SocialProofAnnouncement": { "$className": "RemoteEvent" },
+                "ReturnMessages": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": { "$className": "Folder" }
         },

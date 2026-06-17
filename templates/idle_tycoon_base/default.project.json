@@ -11,7 +11,9 @@
                 "RequestPurchase": { "$className": "RemoteEvent" },
                 "RequestUpgrade": { "$className": "RemoteEvent" },
                 "RequestPrestige": { "$className": "RemoteEvent" },
-                "StateChanged": { "$className": "RemoteEvent" }
+                "StateChanged": { "$className": "RemoteEvent" },
+                "SocialProofAnnouncement": { "$className": "RemoteEvent" },
+                "ReturnMessages": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": {
                 "$className": "Folder"
