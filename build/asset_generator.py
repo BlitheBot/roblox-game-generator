@@ -167,16 +167,18 @@ class AssetGenerator:
             {
                 "role": "system",
                 "content": (
-                    "Write an SEO-optimized Roblox game description. Hard requirements:\n"
-                    "1. The FIRST sentence must clearly state the game's core loop "
-                    "(what the player actually does, moment to moment).\n"
-                    "2. Naturally weave in 3-5 relevant trending keywords from the list "
-                    "provided.\n"
-                    "3. End with a clear call to action (e.g. 'Play now', 'Join today').\n"
-                    "4. Use relevant emoji, maximum 4 total.\n"
-                    "5. Hard limit: under 1000 characters.\n"
-                    "Family-friendly tone, short punchy sentences. Output the description "
-                    "text only — no headers, no quotes."
+                    "Write a compelling Roblox game description that sells the game. "
+                    "Structure exactly like this:\n"
+                    "1. First line: a hook that creates curiosity or excitement (one sentence)\n"
+                    "2. Second line: blank\n"
+                    "3. 3-4 bullet points using emoji, each describing a key feature/benefit\n"
+                    "4. Blank line\n"
+                    "5. A call to action sentence\n"
+                    "6. Relevant hashtag-style keywords at the very end\n\n"
+                    "Hard limit: 1000 characters total. Family-friendly tone. "
+                    "Use action verbs. Make it feel exciting, not corporate. "
+                    "Include 2-3 of the provided trending keywords naturally. "
+                    "Output the description text only — no markdown headers, no quotes."
                 ),
             },
             {
@@ -186,10 +188,19 @@ class AssetGenerator:
                     f"Tagline: {concept.get('tagline', '')}\n"
                     f"Core loop: {concept.get('core_loop', '')}\n"
                     f"Systems: {concept.get('systems', [])}\n"
-                    f"Trending keywords to weave in: {meta_keywords[:10]}"
+                    f"Key monetization hooks: {concept.get('monetization', {}).get('game_passes', [])}\n"
+                    f"Trending keywords to weave in: {meta_keywords[:10]}\n\n"
+                    f"Example structure:\n"
+                    f"Build the ultimate empire from nothing! 🏗️\n\n"
+                    f"⚡ Collect resources and upgrade your factory\n"
+                    f"💰 Earn coins faster with powerful boosts\n"
+                    f"🏆 Climb the leaderboard and prestige for rewards\n"
+                    f"🎁 Daily rewards keep getting better\n\n"
+                    f"Start your empire today — the grind never felt this good!\n"
+                    f"#tycoon #idle #simulator"
                 ),
             },
         ]
-        description = await chat(DEEPSEEK_V3, messages, temperature=0.7, max_tokens=600)
+        description = await chat(DEEPSEEK_V3, messages, temperature=0.75, max_tokens=600)
         description = description.strip().strip('"')
         return description[:1000]
