@@ -10,7 +10,9 @@
                 "StateChanged": { "$className": "RemoteEvent" },
                 "SocialProofAnnouncement": { "$className": "RemoteEvent" },
                 "ReturnMessages": { "$className": "RemoteEvent" },
-                "TutorialComplete": { "$className": "RemoteEvent" }
+                "TutorialComplete": { "$className": "RemoteEvent" },
+                "PlaySound": { "$className": "RemoteEvent" },
+                "Volume": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": { "$className": "Folder" },
             "ToggleShop": { "$className": "BindableEvent" }

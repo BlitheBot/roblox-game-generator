@@ -12,6 +12,7 @@ local Config = require(ReplicatedStorage.Shared.Config)
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local RequestAction = Remotes:WaitForChild("RequestAction") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
+local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 
 local store = nil
 pcall(function()
@@ -170,6 +171,7 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 		data.Currency += earned
 		data.TotalEarned += earned
 		data.Resource = 0
+		PlaySound:FireClient(player, "incremental_sim.sell_resources")
 	elseif action == "upgrade" and typeof(arg) == "string" then
 		for _, def in Config.Upgrades do
 			if def.Name == arg then
@@ -181,6 +183,7 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 				if data.Currency >= cost then
 					data.Currency -= cost
 					data.Upgrades[def.Name] = { Level = level + 1 }
+						PlaySound:FireClient(player, "incremental_sim.upgrade")
 				end
 				break
 			end
@@ -192,6 +195,7 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 			data.Upgrades = {}
 			data.RebirthLevel += 1
 			save(player)
+			PlaySound:FireClient(player, "incremental_sim.rebirth")
 		end
 	else
 		return

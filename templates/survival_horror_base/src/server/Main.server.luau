@@ -13,6 +13,7 @@ local MonsterAI = require(script.Parent.MonsterAI)
 local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local RequestVote = Remotes:WaitForChild("RequestVote") :: RemoteEvent
 local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
+local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 
 local store = nil
 pcall(function()
@@ -81,6 +82,7 @@ local function eliminate(player: Player)
 	if humanoid then
 		humanoid.Health = 0
 	end
+	PlaySound:FireClient(player, "survival_horror.player_hurt")
 	broadcast({ Eliminated = player.Name })
 end
 
@@ -113,6 +115,13 @@ local function runRound()
 
 	MonsterAI.Start(Vector3.new(0, 10, -60), alive, eliminate)
 
+	-- A one-shot heartbeat as the hunt begins sets the tension.
+	for _, roundPlayer in Players:GetPlayers() do
+		if alive[roundPlayer.UserId] then
+			PlaySound:FireClient(roundPlayer, "survival_horror.heartbeat")
+		end
+	end
+
 	local elapsed = 0
 	while elapsed < Config.RoundSeconds and anySurvivors() do
 		task.wait(1)
@@ -142,6 +151,7 @@ local function runRound()
 			currency[userId] = (currency[userId] or 0) + reward
 			if player then
 				table.insert(survivors, player.Name)
+					PlaySound:FireClient(player, "success")
 				save(player)
 			end
 		end

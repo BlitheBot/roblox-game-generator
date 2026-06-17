@@ -19,6 +19,7 @@ local RequestPurchase = Remotes:WaitForChild("RequestPurchase") :: RemoteEvent
 local RequestUpgrade = Remotes:WaitForChild("RequestUpgrade") :: RemoteEvent
 local RequestPrestige = Remotes:WaitForChild("RequestPrestige") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
+local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 
 DataService.Init()
 PlotService.Init()
@@ -71,10 +72,20 @@ local function onPlayerAdded(player: Player)
 	ShopService.RefreshOwnedPasses(player)
 	ProductionService.StartLoop(player)
 
-	-- Periodic state replication (currency ticks up server-side)
+	-- Periodic state replication (currency ticks up server-side). A throttled
+	-- coin sound (max once / 2s) gives the passive income an audible heartbeat.
 	task.spawn(function()
+		local lastCoin = 0
+		local lastCurrency = -1
 		while player.Parent do
 			pushState(player)
+			local data = DataService.Get(player)
+			local now = os.clock()
+			if data and data.Currency > lastCurrency and now - lastCoin >= 2 then
+				lastCoin = now
+				lastCurrency = data.Currency
+				PlaySound:FireClient(player, "coin_earn")
+			end
 			task.wait(1)
 		end
 	end)
@@ -89,6 +100,7 @@ end)
 RequestUpgrade.OnServerEvent:Connect(function(player: Player, upgradeName: unknown)
 	if ShopService.TryBuyUpgrade(player, upgradeName) then
 		pushState(player)
+		PlaySound:FireClient(player, "idle_tycoon.upgrade_buy")
 	end
 end)
 
@@ -96,6 +108,7 @@ RequestPurchase.OnServerEvent:Connect(function(player: Player, kind: unknown, id
 	if kind == "shop_item" then
 		if ShopService.TryBuyShopItem(player, identifier) then
 			pushState(player)
+			PlaySound:FireClient(player, "purchase_success")
 		end
 	elseif kind == "game_pass" then
 		ShopService.PromptGamePass(player, identifier)
@@ -105,6 +118,7 @@ end)
 RequestPrestige.OnServerEvent:Connect(function(player: Player)
 	if PrestigeService.TryPrestige(player) then
 		pushState(player)
+		PlaySound:FireClient(player, "prestige")
 	end
 end)
 

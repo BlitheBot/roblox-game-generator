@@ -16,6 +16,7 @@ local RequestHatch = Remotes:WaitForChild("RequestHatch") :: RemoteEvent
 local RequestEquip = Remotes:WaitForChild("RequestEquip") :: RemoteEvent
 local RequestTrade = Remotes:WaitForChild("RequestTrade") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
+local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 
 local store = nil
 pcall(function()
@@ -186,6 +187,8 @@ RequestHatch.OnServerEvent:Connect(function(player: Player, eggName: unknown)
 				Power = rarity.Power,
 			}
 			pushState(player)
+			PlaySound:FireClient(player, "pet_collect.egg_crack")
+			PlaySound:FireClient(player, "rarity_" .. string.lower(rarity.Name))
 			return
 		end
 	end
@@ -207,6 +210,7 @@ RequestEquip.OnServerEvent:Connect(function(player: Player, petId: unknown)
 	if #data.Equipped < Config.MaxEquipped then
 		table.insert(data.Equipped, petId)
 		pushState(player)
+		PlaySound:FireClient(player, "pet_collect.pet_equip")
 	end
 end)
 
@@ -239,6 +243,8 @@ RequestTrade.OnServerEvent:Connect(function(player: Player, targetUserId: unknow
 			pendingTrades[targetUserId] = nil
 			pushState(player)
 			pushState(target)
+			PlaySound:FireClient(player, "pet_collect.trade_success")
+			PlaySound:FireClient(target, "pet_collect.trade_success")
 		end
 	else
 		pendingTrades[player.UserId] = { target = targetUserId, petId = petId }

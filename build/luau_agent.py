@@ -31,6 +31,11 @@ SHARED_FILE_TARGETS = {
     "HUDClient.client.luau": "src/client/HUDClient.client.luau",
     "ShopClient.client.luau": "src/client/ShopClient.client.luau",
     "LoadingScreen.client.luau": "src/StarterGui/LoadingScreen.client.luau",
+    # Sound layer (GAP 1): shared id table + client playback/settings + server
+    # persistence. SoundConfig is required by both sides.
+    "SoundConfig.luau": "src/shared/SoundConfig.luau",
+    "SoundClient.client.luau": "src/client/SoundClient.client.luau",
+    "SoundSystem.server.luau": "src/ServerScriptService/SoundSystem.server.luau",
 }
 
 # Placeholders filled by code (numerics, monetization tables, titles) —
