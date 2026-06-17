@@ -379,6 +379,73 @@ class OpenCloudPublisher:
                             status=resp.status_code,
                         )
 
+            # Step 3b: upload the game icon (separate asset + endpoint from the
+            # thumbnail). A failure here means the game shows a default/placeholder
+            # icon in search results — alert loudly and distinctly from the
+            # thumbnail failure so we know which one broke (Bug 1).
+            icon_path = thumbnail_path.with_name("icon.png")
+            icon_exists = icon_path.exists()
+            log.info(
+                "publisher.icon.start",
+                genre=genre,
+                universe_id=universe_id,
+                icon_path=str(icon_path),
+                icon_bytes=icon_path.stat().st_size if icon_exists else 0,
+            )
+            if not icon_exists:
+                log.error(
+                    "publisher.icon.missing_file",
+                    genre=genre,
+                    universe_id=universe_id,
+                    icon_path=str(icon_path),
+                )
+                await self._alert(
+                    f"⚠️ Icon MISSING for **{game_title}** [{genre}] "
+                    f"(universe {universe_id}) — file not found at {icon_path}. "
+                    f"Published with the default icon."
+                )
+            else:
+                try:
+                    resp = await client.post(
+                        f"{APIS_BASE}/universes/v1/{universe_id}/icon",
+                        headers=headers,
+                        files={"file": ("icon.png", icon_path.read_bytes(), "image/png")},
+                    )
+                except Exception as exc:
+                    log.error(
+                        "publisher.icon.exception",
+                        genre=genre,
+                        universe_id=universe_id,
+                        error=str(exc),
+                    )
+                    await self._alert(
+                        f"⚠️ Icon upload ERRORED for **{game_title}** [{genre}] "
+                        f"(universe {universe_id}): {str(exc)[:400]}. Published with "
+                        f"the default icon — fix and re-upload."
+                    )
+                else:
+                    if resp.status_code not in (200, 201):
+                        log.error(
+                            "publisher.icon.failed",
+                            genre=genre,
+                            universe_id=universe_id,
+                            status=resp.status_code,
+                            body=resp.text[:500],
+                        )
+                        await self._alert(
+                            f"⚠️ Icon upload FAILED for **{game_title}** [{genre}] "
+                            f"(universe {universe_id}) — HTTP {resp.status_code}: "
+                            f"{resp.text[:400]}. Published with the default icon — "
+                            f"fix and re-upload."
+                        )
+                    else:
+                        log.info(
+                            "publisher.icon.ok",
+                            genre=genre,
+                            universe_id=universe_id,
+                            status=resp.status_code,
+                        )
+
             # Step 4: set place public
             log.info(
                 "publisher.visibility.start", genre=genre, universe_id=universe_id
