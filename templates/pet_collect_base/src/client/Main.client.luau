@@ -18,15 +18,7 @@ local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "PetUI"
 screenGui.ResetOnSpawn = false
 
-local currencyLabel = Instance.new("TextLabel")
-currencyLabel.Size = UDim2.fromOffset(260, 40)
-currencyLabel.Position = UDim2.new(0.5, -130, 0, 12)
-currencyLabel.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-currencyLabel.BackgroundTransparency = 0.25
-currencyLabel.TextColor3 = Color3.fromRGB(255, 225, 120)
-currencyLabel.TextScaled = true
-currencyLabel.Font = Enum.Font.FredokaOne
-currencyLabel.Parent = screenGui
+-- Currency is shown by the shared HUDClient (ReplicatedStorage-driven).
 
 -- Egg shop (left side)
 for i, egg in Config.Eggs do
@@ -70,8 +62,6 @@ local function rarityColor(rarityName: string): Color3
 end
 
 StateChanged.OnClientEvent:Connect(function(state)
-	currencyLabel.Text = math.floor(state.Currency) .. " " .. Config.CurrencyName
-
 	-- Rebuild inventory rows (small list; fine to rebuild per update)
 	for _, child in inventory:GetChildren() do
 		if child:IsA("TextButton") then

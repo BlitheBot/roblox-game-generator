@@ -44,7 +44,7 @@ local function makeButton(text: string, yOffset: number, color: Color3): TextBut
 end
 
 local resourceLabel = makeLabel(12)
-local currencyLabel = makeLabel(52)
+-- Currency is shown by the shared HUDClient (ReplicatedStorage-driven).
 
 local sellButton = makeButton("Sell " .. Config.ResourceName, 120, Color3.fromRGB(60, 130, 80))
 sellButton.Activated:Connect(function()
@@ -70,7 +70,6 @@ screenGui.Parent = playerGui
 
 StateChanged.OnClientEvent:Connect(function(state)
 	resourceLabel.Text = math.floor(state.Resource) .. " " .. Config.ResourceName
-	currencyLabel.Text = math.floor(state.Currency) .. " " .. Config.CurrencyName
 	rebirthButton.Visible = state.CanRebirth == true
 	for _, def in Config.Upgrades do
 		local button = upgradeButtons[def.Name]

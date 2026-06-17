@@ -27,16 +27,7 @@ banner.Font = Enum.Font.Creepster
 banner.Text = "Waiting..."
 banner.Parent = screenGui
 
-local currencyLabel = Instance.new("TextLabel")
-currencyLabel.Size = UDim2.fromOffset(200, 36)
-currencyLabel.Position = UDim2.new(1, -212, 0, 12)
-currencyLabel.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
-currencyLabel.BackgroundTransparency = 0.2
-currencyLabel.TextColor3 = Color3.fromRGB(200, 200, 220)
-currencyLabel.TextScaled = true
-currencyLabel.Font = Enum.Font.FredokaOne
-currencyLabel.Text = "0 " .. Config.CurrencyName
-currencyLabel.Parent = screenGui
+-- Currency is shown by the shared HUDClient (ReplicatedStorage-driven).
 
 local voteFrame = Instance.new("Frame")
 voteFrame.Size = UDim2.fromOffset(220, 52 * #Config.Maps + 8)
@@ -65,7 +56,6 @@ end
 screenGui.Parent = playerGui
 
 RoundState.OnClientEvent:Connect(function(state)
-	currencyLabel.Text = math.floor(state.Currency or 0) .. " " .. Config.CurrencyName
 	voteFrame.Visible = state.Phase == "voting"
 
 	if state.Phase == "lobby" then
