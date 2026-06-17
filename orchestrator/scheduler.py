@@ -116,7 +116,7 @@ class Orchestrator:
         self._perf_monitor   = PerformanceMonitor(self._pool, self._reporter)
         self._breakout       = BreakoutDetector(self._pool, self._reporter)
         self._marketer       = InRobloxMarketer(self._pool)
-        self._publisher      = OpenCloudPublisher(self._pool)
+        self._publisher      = OpenCloudPublisher(self._pool, self._reporter)
         self._failure_memory = FailureMemory(self._pool)
         self._bot            = create_bot(self._pool)
         self._approval_gate  = ApprovalGate(self._pool, self._reporter, self._bot)

@@ -22,6 +22,11 @@ import asyncpg
 import httpx
 import structlog
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from monitor.discord_reporter import DiscordReporter
+
 log = structlog.get_logger()
 
 APIS_BASE = "https://apis.roblox.com"
@@ -136,8 +141,26 @@ async def upload_thumbnail(
 
 
 class OpenCloudPublisher:
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(
+        self, pool: asyncpg.Pool, reporter: "DiscordReporter | None" = None
+    ) -> None:
         self._pool = pool
+        self._reporter = reporter
+
+    async def _alert(self, message: str) -> None:
+        """Bug 1: publish-step failures (title/thumbnail) must never fail
+        silently. Sends a Discord alert via the wired reporter, falling back to
+        a pool-backed reporter so alerts fire regardless of how the publisher
+        was constructed. Never raises."""
+        try:
+            reporter = self._reporter
+            if reporter is None:
+                from monitor.discord_reporter import DiscordReporter
+
+                reporter = DiscordReporter(self._pool)
+            await reporter.alert(message)
+        except Exception as exc:
+            log.error("publisher.alert_failed", error=str(exc))
 
     async def publish(
         self,
@@ -200,6 +223,14 @@ class OpenCloudPublisher:
 
         async with httpx.AsyncClient(timeout=300) as client:
             # Step 1: upload place version
+            log.info(
+                "publisher.place_upload.start",
+                genre=genre,
+                universe_id=universe_id,
+                place_id=place_id,
+                title=game_title,
+                rbxl_bytes=rbxl_path.stat().st_size if rbxl_path.exists() else 0,
+            )
             resp = await client.post(
                 f"{APIS_BASE}/universes/v1/{universe_id}"
                 f"/places/{place_id}/versions",
@@ -208,41 +239,150 @@ class OpenCloudPublisher:
                 content=rbxl_path.read_bytes(),
             )
             if resp.status_code != 200:
+                log.error(
+                    "publisher.place_upload.failed",
+                    genre=genre,
+                    universe_id=universe_id,
+                    place_id=place_id,
+                    status=resp.status_code,
+                    body=resp.text[:500],
+                )
                 return PublishResult(
                     success=False,
                     error=f"place upload failed ({resp.status_code}): {resp.text[:500]}",
                 )
-
-            # Step 2: set name + description (Open Cloud v2)
-            resp = await client.patch(
-                f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
-                params={"updateMask": "displayName,description"},
-                headers={**headers, "Content-Type": "application/json"},
-                json={"displayName": game_title, "description": description},
+            log.info(
+                "publisher.place_upload.ok",
+                genre=genre,
+                universe_id=universe_id,
+                status=resp.status_code,
             )
-            if resp.status_code not in (200, 201):
-                log.warning(
-                    "publisher.metadata_failed",
-                    status=resp.status_code,
-                    body=resp.text[:300],
-                )
 
-            # Step 3: upload thumbnail
+            # Step 2: set name + description (Open Cloud v2). A failure here
+            # means the game ships with the wrong/placeholder title — alert
+            # loudly, never swallow it (Bug 1).
+            log.info(
+                "publisher.metadata.start",
+                genre=genre,
+                universe_id=universe_id,
+                title=game_title,
+                description_len=len(description or ""),
+            )
+            try:
+                resp = await client.patch(
+                    f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
+                    params={"updateMask": "displayName,description"},
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={"displayName": game_title, "description": description},
+                )
+            except Exception as exc:
+                log.error(
+                    "publisher.metadata.exception",
+                    genre=genre,
+                    universe_id=universe_id,
+                    error=str(exc),
+                )
+                await self._alert(
+                    f"⚠️ Title/description update ERRORED for **{game_title}** "
+                    f"[{genre}] (universe {universe_id}): {str(exc)[:400]}. The "
+                    f"game may be live with the wrong title — fix and re-run."
+                )
+            else:
+                if resp.status_code not in (200, 201):
+                    log.error(
+                        "publisher.metadata.failed",
+                        genre=genre,
+                        universe_id=universe_id,
+                        status=resp.status_code,
+                        body=resp.text[:500],
+                    )
+                    await self._alert(
+                        f"⚠️ Title/description update FAILED for **{game_title}** "
+                        f"[{genre}] (universe {universe_id}) — HTTP "
+                        f"{resp.status_code}: {resp.text[:400]}. The game is live "
+                        f"with the wrong title — fix and re-run."
+                    )
+                else:
+                    log.info(
+                        "publisher.metadata.ok",
+                        genre=genre,
+                        universe_id=universe_id,
+                        status=resp.status_code,
+                        title=game_title,
+                    )
+
+            # Step 3: upload thumbnail. A failure here means the game ships
+            # with no/placeholder thumbnail (kills CTR) — alert loudly (Bug 1).
             # TODO: Open Cloud thumbnail upload is still the v1 endpoint per
             # spec 5.1; if Roblox moves it to /cloud/v2, update here.
-            resp = await client.post(
-                f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
-                headers=headers,
-                files={"file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")},
+            thumb_exists = thumbnail_path.exists()
+            log.info(
+                "publisher.thumbnail.start",
+                genre=genre,
+                universe_id=universe_id,
+                thumbnail_path=str(thumbnail_path),
+                thumbnail_bytes=thumbnail_path.stat().st_size if thumb_exists else 0,
             )
-            if resp.status_code not in (200, 201):
-                log.warning(
-                    "publisher.thumbnail_failed",
-                    status=resp.status_code,
-                    body=resp.text[:300],
+            if not thumb_exists:
+                log.error(
+                    "publisher.thumbnail.missing_file",
+                    genre=genre,
+                    universe_id=universe_id,
+                    thumbnail_path=str(thumbnail_path),
                 )
+                await self._alert(
+                    f"⚠️ Thumbnail MISSING for **{game_title}** [{genre}] "
+                    f"(universe {universe_id}) — file not found at "
+                    f"{thumbnail_path}. Published with no custom thumbnail."
+                )
+            else:
+                try:
+                    resp = await client.post(
+                        f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
+                        headers=headers,
+                        files={
+                            "file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")
+                        },
+                    )
+                except Exception as exc:
+                    log.error(
+                        "publisher.thumbnail.exception",
+                        genre=genre,
+                        universe_id=universe_id,
+                        error=str(exc),
+                    )
+                    await self._alert(
+                        f"⚠️ Thumbnail upload ERRORED for **{game_title}** "
+                        f"[{genre}] (universe {universe_id}): {str(exc)[:400]}. "
+                        f"Published with no custom thumbnail — fix and re-upload."
+                    )
+                else:
+                    if resp.status_code not in (200, 201):
+                        log.error(
+                            "publisher.thumbnail.failed",
+                            genre=genre,
+                            universe_id=universe_id,
+                            status=resp.status_code,
+                            body=resp.text[:500],
+                        )
+                        await self._alert(
+                            f"⚠️ Thumbnail upload FAILED for **{game_title}** "
+                            f"[{genre}] (universe {universe_id}) — HTTP "
+                            f"{resp.status_code}: {resp.text[:400]}. Published "
+                            f"with no custom thumbnail — fix and re-upload."
+                        )
+                    else:
+                        log.info(
+                            "publisher.thumbnail.ok",
+                            genre=genre,
+                            universe_id=universe_id,
+                            status=resp.status_code,
+                        )
 
             # Step 4: set place public
+            log.info(
+                "publisher.visibility.start", genre=genre, universe_id=universe_id
+            )
             resp = await client.patch(
                 f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
                 params={"updateMask": "visibility"},
@@ -250,10 +390,25 @@ class OpenCloudPublisher:
                 json={"visibility": "PUBLIC"},
             )
             if resp.status_code not in (200, 201):
-                log.warning(
-                    "publisher.visibility_failed",
+                log.error(
+                    "publisher.visibility.failed",
+                    genre=genre,
+                    universe_id=universe_id,
                     status=resp.status_code,
-                    body=resp.text[:300],
+                    body=resp.text[:500],
+                )
+                await self._alert(
+                    f"⚠️ Visibility (set-public) FAILED for **{game_title}** "
+                    f"[{genre}] (universe {universe_id}) — HTTP "
+                    f"{resp.status_code}: {resp.text[:400]}. The game may not be "
+                    f"publicly visible — check the universe."
+                )
+            else:
+                log.info(
+                    "publisher.visibility.ok",
+                    genre=genre,
+                    universe_id=universe_id,
+                    status=resp.status_code,
                 )
 
         # Step 5: record in published_games
