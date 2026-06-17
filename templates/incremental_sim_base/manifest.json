@@ -4,6 +4,8 @@
     "description": "Resource tick, sell loop, rebirth multiplier, leaderboard.",
     "placeholders": {
         "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{TAGLINE}}": "Short marketing tagline from concept.tagline (loading screen)",
+        "{{MECHANIC_TAG}}": "Genre tag from concept.mechanic_tag (drives DesignSystem palette)",
         "{{CURRENCY_NAME}}": "Soft currency name (e.g. 'Coins')",
         "{{RESOURCE_NAME}}": "The thing that grows over time (e.g. 'Crystals')",
         "{{REBIRTH_NAME}}": "Name of the rebirth action (e.g. 'Ascend')",

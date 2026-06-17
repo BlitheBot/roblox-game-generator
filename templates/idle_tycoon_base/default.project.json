@@ -18,7 +18,8 @@
             },
             "ToolboxAssets": {
                 "$className": "Folder"
-            }
+            },
+            "ToggleShop": { "$className": "BindableEvent" }
         },
         "ServerScriptService": {
             "Server": {

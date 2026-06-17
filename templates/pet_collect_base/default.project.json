@@ -14,7 +14,8 @@
                 "ReturnMessages": { "$className": "RemoteEvent" },
                 "TutorialComplete": { "$className": "RemoteEvent" }
             },
-            "ToolboxAssets": { "$className": "Folder" }
+            "ToolboxAssets": { "$className": "Folder" },
+            "ToggleShop": { "$className": "BindableEvent" }
         },
         "ServerScriptService": {
             "Server": { "$path": "src/server" },

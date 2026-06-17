@@ -4,6 +4,8 @@
     "description": "Egg hatching with rarity tiers, pet inventory, equip slots, trade requests.",
     "placeholders": {
         "{{GAME_TITLE}}": "Game title from concept JSON",
+        "{{TAGLINE}}": "Short marketing tagline from concept.tagline (loading screen)",
+        "{{MECHANIC_TAG}}": "Genre tag from concept.mechanic_tag (drives DesignSystem palette)",
         "{{CURRENCY_NAME}}": "Soft currency name",
         "{{PET_NOUN}}": "What the collectibles are called (e.g. 'Parrots')",
         "{{EGG_NOUN}}": "What the hatchable container is called (e.g. 'Crates')",

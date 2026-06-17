@@ -19,10 +19,26 @@ log = structlog.get_logger()
 
 TEMPLATES_DIR = pathlib.Path(__file__).parent.parent / "templates"
 
+# Shared, genre-agnostic UI layer injected into every build regardless of
+# template. The canonical source lives in templates/shared/; these land in the
+# build's src tree (so the existing project.json folder mappings pick them up)
+# with the same placeholder substitution applied as the template files.
+# LoadingScreen.client.luau deliberately overwrites the template's own loading
+# screen so every game ships the one polished version.
+SHARED_DIR = TEMPLATES_DIR / "shared"
+SHARED_FILE_TARGETS = {
+    "DesignSystem.luau": "src/shared/DesignSystem.luau",
+    "HUDClient.client.luau": "src/client/HUDClient.client.luau",
+    "ShopClient.client.luau": "src/client/ShopClient.client.luau",
+    "LoadingScreen.client.luau": "src/StarterGui/LoadingScreen.client.luau",
+}
+
 # Placeholders filled by code (numerics, monetization tables, titles) —
 # never offered to the theming LLM and never overridable by its output
 PROGRAMMATIC_PLACEHOLDERS = {
     "{{GAME_TITLE}}",
+    "{{TAGLINE}}",
+    "{{MECHANIC_TAG}}",
     "{{CURRENCY_NAME}}",
     "{{VIP_SERVER_ENABLED}}",
     "{{ROUND_SECONDS}}",
@@ -111,6 +127,20 @@ class LuauAgent:
             dst_file = out_dir / rel_path
             dst_file.parent.mkdir(parents=True, exist_ok=True)
             content = src_file.read_text(encoding="utf-8")
+            for placeholder, replacement in substitutions.items():
+                content = content.replace(placeholder, replacement)
+            dst_file.write_text(content, encoding="utf-8", newline="\n")
+
+        # Inject the shared UI layer (DesignSystem + unified HUD/Shop/Loading)
+        # into every build, applying the same substitutions. Overwrites any
+        # same-path template file (e.g. the old LoadingScreen) on purpose.
+        for filename, rel_target in SHARED_FILE_TARGETS.items():
+            shared_src = SHARED_DIR / filename
+            if not shared_src.exists():
+                continue
+            dst_file = out_dir / rel_target
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            content = shared_src.read_text(encoding="utf-8")
             for placeholder, replacement in substitutions.items():
                 content = content.replace(placeholder, replacement)
             dst_file.write_text(content, encoding="utf-8", newline="\n")
@@ -212,6 +242,8 @@ class LuauAgent:
 
         substitutions: dict[str, str] = {
             "{{GAME_TITLE}}": concept.get("game_title", "Untitled Game"),
+            "{{TAGLINE}}": concept.get("tagline", "An exciting new adventure awaits!"),
+            "{{MECHANIC_TAG}}": concept.get("mechanic_tag", ""),
             "{{CURRENCY_NAME}}": monetization.get("currency_name", "Coins"),
             "{{GAME_PASSES_LUA}}": game_passes_lua,
             "{{SHOP_ITEMS_LUA}}": shop_items_lua,
