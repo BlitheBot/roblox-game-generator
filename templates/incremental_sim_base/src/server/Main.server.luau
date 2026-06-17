@@ -15,6 +15,7 @@ local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
+local UpdateProgress = Remotes:WaitForChild("UpdateProgress") :: RemoteEvent
 
 -- Leaderboard submission (LeaderboardService contract; absent → no-op).
 local function submitScore(player: Player, value: number)
@@ -178,6 +179,7 @@ Players.PlayerAdded:Connect(function(player)
 				data.Resource += growth
 				pushState(player)
 				submitScore(player, data.RebirthLevel) -- leaderboard metric: rebirth count
+				UpdateProgress:FireClient(player, data.Currency, Config.RebirthRequirement, "Progress to Rebirth")
 			end
 			task.wait(Config.TickSeconds * eventMult("cooldown_multiplier"))
 		end

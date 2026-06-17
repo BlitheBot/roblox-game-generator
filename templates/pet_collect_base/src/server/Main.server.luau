@@ -19,6 +19,9 @@ local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
+local UpdateProgress = Remotes:WaitForChild("UpdateProgress") :: RemoteEvent
+
+local COLLECTION_MILESTONES = { 10, 25, 50, 100, 250, 500 }
 
 -- Leaderboard submission (LeaderboardService contract; absent → no-op).
 local function submitScore(player: Player, value: number)
@@ -184,14 +187,26 @@ Players.PlayerAdded:Connect(function(player)
 				local mult = (if typeof(streakMult) == "number" then streakMult else 1)
 					* (if typeof(monetizationMult) == "number" then monetizationMult else 1)
 				data.Currency += Config.BaseIncomePerSecond * equippedPower(data) * mult * eventMult("coin_multiplier")
-				-- Leaderboard metric: rarest (highest-power) pet owned.
+				-- Leaderboard metric: rarest (highest-power) pet owned + collection size.
 				local rarest = 0
+				local count = 0
 				for _, pet in data.Pets do
+					count += 1
 					if pet.Power > rarest then
 						rarest = pet.Power
 					end
 				end
 				submitScore(player, rarest)
+				-- Progress to the next collection milestone.
+				local nextM, prevM = COLLECTION_MILESTONES[#COLLECTION_MILESTONES], 0
+				for _, m in ipairs(COLLECTION_MILESTONES) do
+					if count < m then
+						nextM = m
+						break
+					end
+					prevM = m
+				end
+				UpdateProgress:FireClient(player, count - prevM, nextM - prevM, "Progress to " .. nextM .. " Pets")
 				pushState(player)
 			end
 			task.wait(1)

@@ -16,6 +16,9 @@ local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
+local UpdateProgress = Remotes:WaitForChild("UpdateProgress") :: RemoteEvent
+
+local REWARD_TIERS = { 100, 250, 500, 1000, 2500 }
 
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
@@ -98,8 +101,19 @@ end
 local function broadcast(payload: { [string]: any })
 	payload.Phase = phase
 	for _, player in Players:GetPlayers() do
-		payload.Currency = currency[player.UserId] or 0
+		local bal = currency[player.UserId] or 0
+		payload.Currency = bal
 		RoundState:FireClient(player, payload)
+		-- Progress to the next coin reward tier.
+		local nextTier, prevTier = REWARD_TIERS[#REWARD_TIERS], 0
+		for _, tier in ipairs(REWARD_TIERS) do
+			if bal < tier then
+				nextTier = tier
+				break
+			end
+			prevTier = tier
+		end
+		UpdateProgress:FireClient(player, bal - prevTier, nextTier - prevTier, "Progress to Next Reward")
 	end
 end
 

@@ -44,6 +44,8 @@ SHARED_FILE_TARGETS = {
     # Universal leaderboard (GAP 5): OrderedDataStore service + top-10 display.
     "LeaderboardService.server.luau": "src/ServerScriptService/LeaderboardService.server.luau",
     "LeaderboardDisplay.client.luau": "src/client/LeaderboardDisplay.client.luau",
+    # Always-visible progression bar (server broadcasts current/max via UpdateProgress).
+    "ProgressionDisplay.client.luau": "src/client/ProgressionDisplay.client.luau",
 }
 
 # Placeholders filled by code (numerics, monetization tables, titles) —

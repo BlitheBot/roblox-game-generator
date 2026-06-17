@@ -22,6 +22,7 @@ local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
+local UpdateProgress = Remotes:WaitForChild("UpdateProgress") :: RemoteEvent
 
 -- Leaderboard submission (LeaderboardService contract; absent → no-op).
 local function submitScore(player: Player, value: number)
@@ -99,6 +100,7 @@ local function onPlayerAdded(player: Player)
 			end
 			if data then
 				submitScore(player, data.TotalEarned) -- total earned; throttled service-side
+				UpdateProgress:FireClient(player, data.Currency, Config.PrestigeRequirement, "Progress to Prestige")
 			end
 			task.wait(1)
 		end
