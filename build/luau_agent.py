@@ -39,6 +39,8 @@ SHARED_FILE_TARGETS = {
     # Onboarding layer (GAP 2): first-time player guide (server gate + client UI).
     "OnboardingService.server.luau": "src/ServerScriptService/OnboardingService.server.luau",
     "OnboardingClient.client.luau": "src/client/OnboardingClient.client.luau",
+    # Live events (keeps games feeling alive) — server-authoritative, contract-driven.
+    "EventsService.server.luau": "src/ServerScriptService/EventsService.server.luau",
 }
 
 # Placeholders filled by code (numerics, monetization tables, titles) —

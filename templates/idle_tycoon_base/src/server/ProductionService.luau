@@ -5,6 +5,21 @@
 
 local Players = game:GetService("Players")
 local Debris = game:GetService("Debris")
+local ServerStorage = game:GetService("ServerStorage")
+
+-- Live event multiplier (EventsService contract; absent → 1).
+local function eventMult(effectType: string): number
+	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
+	if fn and fn:IsA("BindableFunction") then
+		local ok, m = pcall(function()
+			return fn:Invoke(effectType)
+		end)
+		if ok and typeof(m) == "number" then
+			return m
+		end
+	end
+	return 1
+end
 
 local Config = require(game.ReplicatedStorage.Shared.Config)
 local DataService = require(script.Parent.DataService)
@@ -67,6 +82,10 @@ function ProductionService.ComputeStats(player: Player): (number, number, number
 	if typeof(monetizationMult) == "number" then
 		value *= monetizationMult
 	end
+
+	-- Live events: 2x coins (happy_hour), faster drops (speed_round)
+	value *= eventMult("coin_multiplier")
+	interval *= eventMult("cooldown_multiplier")
 
 	return value, math.max(0.25, interval), math.floor(droppers)
 end

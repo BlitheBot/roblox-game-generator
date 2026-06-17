@@ -16,6 +16,20 @@ local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
+-- Live event multiplier (EventsService contract; absent → 1).
+local function eventMult(effectType: string): number
+	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
+	if fn and fn:IsA("BindableFunction") then
+		local ok, m = pcall(function()
+			return fn:Invoke(effectType)
+		end)
+		if ok and typeof(m) == "number" then
+			return m
+		end
+	end
+	return 1
+end
+
 local store = nil
 pcall(function()
 	store = DataStoreService:GetDataStore("PlayerData_v1")
@@ -152,7 +166,8 @@ local function runRound()
 					reward = math.floor(reward * monetizationMult)
 				end
 			end
-			currency[userId] = (currency[userId] or 0) + reward
+			reward = math.floor(reward * eventMult("coin_multiplier"))
+				currency[userId] = (currency[userId] or 0) + reward
 			if player then
 				table.insert(survivors, player.Name)
 					PlaySound:FireClient(player, "success")

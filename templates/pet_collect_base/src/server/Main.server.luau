@@ -19,6 +19,20 @@ local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
+-- Live event multiplier (EventsService contract; absent → 1).
+local function eventMult(effectType: string): number
+	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
+	if fn and fn:IsA("BindableFunction") then
+		local ok, m = pcall(function()
+			return fn:Invoke(effectType)
+		end)
+		if ok and typeof(m) == "number" then
+			return m
+		end
+	end
+	return 1
+end
+
 local store = nil
 pcall(function()
 	store = DataStoreService:GetDataStore("PlayerData_v1")
@@ -149,7 +163,7 @@ Players.PlayerAdded:Connect(function(player)
 				local monetizationMult = player:GetAttribute("MonetizationMultiplier")
 				local mult = (if typeof(streakMult) == "number" then streakMult else 1)
 					* (if typeof(monetizationMult) == "number" then monetizationMult else 1)
-				data.Currency += Config.BaseIncomePerSecond * equippedPower(data) * mult
+				data.Currency += Config.BaseIncomePerSecond * equippedPower(data) * mult * eventMult("coin_multiplier")
 				pushState(player)
 			end
 			task.wait(1)
@@ -180,7 +194,7 @@ RequestHatch.OnServerEvent:Connect(function(player: Player, eggName: unknown)
 				return
 			end
 			data.Currency -= egg.Cost
-			local rarity = rollRarity(egg.WeightBonus or 1)
+			local rarity = rollRarity((egg.WeightBonus or 1) * eventMult("rare_chance_boost"))
 			local petId = HttpService:GenerateGUID(false)
 			data.Pets[petId] = {
 				Name = pickPetName(rarity.Name),

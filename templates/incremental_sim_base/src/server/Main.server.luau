@@ -15,6 +15,20 @@ local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
+-- Live event multiplier (EventsService contract; absent → 1).
+local function eventMult(effectType: string): number
+	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
+	if fn and fn:IsA("BindableFunction") then
+		local ok, m = pcall(function()
+			return fn:Invoke(effectType)
+		end)
+		if ok and typeof(m) == "number" then
+			return m
+		end
+	end
+	return 1
+end
+
 local store = nil
 pcall(function()
 	store = DataStoreService:GetDataStore("PlayerData_v1")
@@ -143,7 +157,7 @@ Players.PlayerAdded:Connect(function(player)
 				data.Resource += growth
 				pushState(player)
 			end
-			task.wait(Config.TickSeconds)
+			task.wait(Config.TickSeconds * eventMult("cooldown_multiplier"))
 		end
 	end)
 end)
@@ -168,7 +182,7 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 
 	if action == "sell" then
 		local _, sellValue = computeRates(data)
-		local earned = data.Resource * sellValue
+		local earned = data.Resource * sellValue * eventMult("coin_multiplier")
 		data.Currency += earned
 		data.TotalEarned += earned
 		data.Resource = 0

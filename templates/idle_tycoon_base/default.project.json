@@ -20,7 +20,8 @@
                 "Notification": { "$className": "RemoteEvent" },
                 "StartOnboarding": { "$className": "RemoteEvent" },
                 "CompleteOnboarding": { "$className": "RemoteEvent" },
-                "OnboardingStepComplete": { "$className": "RemoteEvent" }
+                "OnboardingStepComplete": { "$className": "RemoteEvent" },
+                "UpdateHUD": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": {
                 "$className": "Folder"

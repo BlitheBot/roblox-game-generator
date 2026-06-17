@@ -156,6 +156,58 @@ local statsLabel = DS.createLabel({
 })
 
 -- ═══════════════════════════════════
+-- TOP CENTER — Live event banner
+-- ═══════════════════════════════════
+local eventBanner = DS.createPanel({
+	size = DS.getResponsiveSize(UDim2.new(0, 260, 0, 32)),
+	position = UDim2.new(0.5, 0, 0, topY + 50),
+	color = DS.Colors.Accent or DS.Colors.Primary,
+	shadow = true,
+	parent = hudGui,
+})
+eventBanner.AnchorPoint = Vector2.new(0.5, 0)
+eventBanner.Visible = false
+
+local eventLabel = DS.createLabel({
+	text = "",
+	size = UDim2.new(1, -12, 1, 0),
+	position = UDim2.new(0, 6, 0, 0),
+	style = "subtitle",
+	align = "Center",
+	color = DS.Colors.PrimaryText,
+	parent = eventBanner,
+})
+
+local eventName = nil
+local eventDeadline = 0
+local eventToken = 0
+
+local function setEvent(name, endsIn)
+	if not name or name == false then
+		eventName = nil
+		eventToken += 1
+		eventBanner.Visible = false
+		return
+	end
+	eventName = tostring(name)
+	eventDeadline = os.clock() + (tonumber(endsIn) or 0)
+	eventBanner.Visible = true
+	eventToken += 1
+	local myToken = eventToken
+	task.spawn(function()
+		while eventToken == myToken and eventName do
+			local left = math.max(0, math.floor(eventDeadline - os.clock()))
+			eventLabel.Text = string.format("%s · %d:%02d", eventName, left // 60, left % 60)
+			if left <= 0 then
+				eventBanner.Visible = false
+				return
+			end
+			task.wait(1)
+		end
+	end)
+end
+
+-- ═══════════════════════════════════
 -- BOTTOM CENTER — Quick action bar
 -- ═══════════════════════════════════
 local actionBar = DS.createPanel({
@@ -286,6 +338,9 @@ local function applyState(data)
 		statsLabel.Text = "⭐ " .. tostring(data.stats)
 	elseif data.Phase then
 		statsLabel.Text = "⭐ " .. tostring(data.Phase):upper()
+	end
+	if data.activeEvent ~= nil then
+		setEvent(data.activeEvent, data.eventEndsIn)
 	end
 end
 
