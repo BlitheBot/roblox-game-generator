@@ -20,6 +20,7 @@ local RequestUpgrade = Remotes:WaitForChild("RequestUpgrade") :: RemoteEvent
 local RequestPrestige = Remotes:WaitForChild("RequestPrestige") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
+local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
 DataService.Init()
 PlotService.Init()
@@ -69,6 +70,7 @@ end
 local function onPlayerAdded(player: Player)
 	DataService.Load(player)
 	PlotService.Assign(player)
+	OnboardingStepComplete:FireClient(player, "PlotClaimed")
 	ShopService.RefreshOwnedPasses(player)
 	ProductionService.StartLoop(player)
 
@@ -101,6 +103,7 @@ RequestUpgrade.OnServerEvent:Connect(function(player: Player, upgradeName: unkno
 	if ShopService.TryBuyUpgrade(player, upgradeName) then
 		pushState(player)
 		PlaySound:FireClient(player, "idle_tycoon.upgrade_buy")
+		OnboardingStepComplete:FireClient(player, "UpgradePurchased")
 	end
 end)
 

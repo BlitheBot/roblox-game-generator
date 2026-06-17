@@ -14,7 +14,11 @@
                 "ReturnMessages": { "$className": "RemoteEvent" },
                 "TutorialComplete": { "$className": "RemoteEvent" },
                 "PlaySound": { "$className": "RemoteEvent" },
-                "Volume": { "$className": "RemoteEvent" }
+                "Volume": { "$className": "RemoteEvent" },
+                "Notification": { "$className": "RemoteEvent" },
+                "StartOnboarding": { "$className": "RemoteEvent" },
+                "CompleteOnboarding": { "$className": "RemoteEvent" },
+                "OnboardingStepComplete": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": { "$className": "Folder" },
             "ToggleShop": { "$className": "BindableEvent" }

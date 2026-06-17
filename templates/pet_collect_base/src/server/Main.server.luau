@@ -17,6 +17,7 @@ local RequestEquip = Remotes:WaitForChild("RequestEquip") :: RemoteEvent
 local RequestTrade = Remotes:WaitForChild("RequestTrade") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
+local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
 local store = nil
 pcall(function()
@@ -189,6 +190,7 @@ RequestHatch.OnServerEvent:Connect(function(player: Player, eggName: unknown)
 			pushState(player)
 			PlaySound:FireClient(player, "pet_collect.egg_crack")
 			PlaySound:FireClient(player, "rarity_" .. string.lower(rarity.Name))
+			OnboardingStepComplete:FireClient(player, "EggOpened")
 			return
 		end
 	end
@@ -211,6 +213,7 @@ RequestEquip.OnServerEvent:Connect(function(player: Player, petId: unknown)
 		table.insert(data.Equipped, petId)
 		pushState(player)
 		PlaySound:FireClient(player, "pet_collect.pet_equip")
+		OnboardingStepComplete:FireClient(player, "PetEquipped")
 	end
 end)
 

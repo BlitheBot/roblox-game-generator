@@ -36,6 +36,9 @@ SHARED_FILE_TARGETS = {
     "SoundConfig.luau": "src/shared/SoundConfig.luau",
     "SoundClient.client.luau": "src/client/SoundClient.client.luau",
     "SoundSystem.server.luau": "src/ServerScriptService/SoundSystem.server.luau",
+    # Onboarding layer (GAP 2): first-time player guide (server gate + client UI).
+    "OnboardingService.server.luau": "src/ServerScriptService/OnboardingService.server.luau",
+    "OnboardingClient.client.luau": "src/client/OnboardingClient.client.luau",
 }
 
 # Placeholders filled by code (numerics, monetization tables, titles) —

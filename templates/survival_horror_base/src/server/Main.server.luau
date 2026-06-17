@@ -14,6 +14,7 @@ local Remotes = ReplicatedStorage:WaitForChild("Remotes")
 local RequestVote = Remotes:WaitForChild("RequestVote") :: RemoteEvent
 local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
+local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 
 local store = nil
 pcall(function()
@@ -112,6 +113,9 @@ local function runRound()
 		end
 	end
 	broadcast({ Map = chosenMap, TimeLeft = Config.RoundSeconds, Monster = Config.MonsterName })
+	for _, roundPlayer in Players:GetPlayers() do
+		OnboardingStepComplete:FireClient(roundPlayer, "RoundJoined")
+	end
 
 	MonsterAI.Start(Vector3.new(0, 10, -60), alive, eliminate)
 
@@ -157,6 +161,9 @@ local function runRound()
 		end
 	end
 	broadcast({ Survivors = survivors })
+	for _, resultPlayer in Players:GetPlayers() do
+		OnboardingStepComplete:FireClient(resultPlayer, "RoundCompleted")
+	end
 	task.wait(5)
 end
 

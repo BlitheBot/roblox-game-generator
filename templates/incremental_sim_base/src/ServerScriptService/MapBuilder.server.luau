@@ -230,4 +230,18 @@ do
 	placeBeacon(Vector3.new(-90, 3, 82), GOLD, "SHOP")
 	placeBeacon(Vector3.new(0, 3, 0), GREEN, "UPGRADES")
 	placeBeacon(Vector3.new(-100, 3, -60), PURPLE, "REBIRTH")
+
+	-- Invisible tagged anchors so the onboarding arrow can point at key zones.
+	local function tagPoint(pos: Vector3, tag: string)
+		local marker = Instance.new("Part")
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.Transparency = 1
+		marker.Size = Vector3.new(2, 2, 2)
+		marker.Position = pos
+		marker.Parent = map
+		game:GetService("CollectionService"):AddTag(marker, tag)
+	end
+	tagPoint(Vector3.new(-90, 3, 82), "SellArea")
+	tagPoint(Vector3.new(0, 3, 0), "UpgradeStation")
 end
