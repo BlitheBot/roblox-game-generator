@@ -48,15 +48,43 @@ def _get_limits() -> dict:
 
 
 class PublishRateLimiter:
+    async def get_backlog_allowance(
+        self, pool: asyncpg.Pool, genre_account: str
+    ) -> int:
+        """
+        How many backlog games may publish today for this account, on top of the
+        normal weekly limit. Applies ONLY to games approved before the rate
+        limiter existed (queued > 24h), never to fresh builds.
+
+        Conservative: at most 1 extra backlog game per account per day, and it
+        never bypasses the same-account / any-publish minimum gaps — so the
+        backlog clears over ~1-2 weeks instead of in a suspicious 24h burst.
+        """
+        async with pool.acquire() as conn:
+            backlog_count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM pending_approvals
+                WHERE status = 'approved'
+                  AND processed_at IS NULL
+                  AND created_at < NOW() - INTERVAL '24 hours'
+                """
+            )
+        if not backlog_count:
+            return 0
+        return 1
+
     async def can_publish(
         self,
         pool: asyncpg.Pool,
         genre_account: str,
         opportunity_score: float = 0.0,
+        backlog_allowance: int = 0,
     ) -> tuple[bool, str]:
         """Returns (allowed, reason). Checks all rate limits before allowing
-        any publish."""
+        any publish. backlog_allowance (max +1/day) relaxes only the weekly and
+        daily *caps* — never the same-account (60h) or any-publish (12h) gaps."""
         limits = _get_limits()
+        backlog_allowance = max(0, int(backlog_allowance or 0))
         now = datetime.now(timezone.utc)
         week_ago = now - timedelta(days=7)
         day_ago = now - timedelta(days=1)
@@ -77,6 +105,7 @@ class PublishRateLimiter:
             weekly_limit = limits["per_account_per_week"]
             if opportunity_score >= HIGH_OPPORTUNITY_SCORE:
                 weekly_limit = limits["per_account_per_week_max"]
+            weekly_limit += backlog_allowance
 
             if weekly_count >= weekly_limit:
                 next_slot = await self._next_available_slot(conn, genre_account, limits)
@@ -128,7 +157,7 @@ class PublishRateLimiter:
                 """,
                 day_ago,
             )
-            max_per_day = limits["max_per_day_all_accounts"]
+            max_per_day = limits["max_per_day_all_accounts"] + backlog_allowance
             if daily_count >= max_per_day:
                 return False, (
                     f"Already published {daily_count} game(s) today "
@@ -144,7 +173,7 @@ class PublishRateLimiter:
                 """,
                 week_ago,
             )
-            max_per_week = limits["max_per_week_all_accounts"]
+            max_per_week = limits["max_per_week_all_accounts"] + backlog_allowance
             if weekly_total >= max_per_week:
                 return False, (
                     f"Published {weekly_total}/{max_per_week} games this week across all "

@@ -144,6 +144,12 @@ class DiscordReporter:
                 "SELECT value FROM orchestrator_state WHERE key = $1",
                 weekly_stat_key("viability_rejected"),
             )
+            backlog_waiting = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM pending_approvals
+                WHERE status = 'approved' AND processed_at IS NULL
+                """
+            )
 
         from publish.rate_limiter import ACCOUNTS, _get_limits
 
@@ -195,6 +201,11 @@ class DiscordReporter:
         lines.append(f"Concepts rejected (viability): {int(viability_rejected or 0)}")
         lines.append(f"Build failures: {build_failures_week or 0}")
         lines.append(f"Next week capacity: {next_week_capacity} games")
+        if backlog_waiting and backlog_waiting > 0:
+            lines.append(
+                f"📦 Backlog Status: {int(backlog_waiting)} approved games waiting to "
+                f"publish (clearing at a safe pace, ~1 extra per account per day)"
+            )
         if top_opportunity:
             lines.append(
                 f"Best opportunity genre: {top_opportunity['genre']} "

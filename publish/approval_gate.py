@@ -491,8 +491,14 @@ class ApprovalGate:
         # parked with a scheduled_publish_after slot and retried later by the
         # publish_queue_processor — logged silently, never alerted to Discord.
         opportunity_score = await self._opportunity_score(row["concept_id"])
+        # Conservative backlog clearing: allow at most 1 extra game/day per
+        # account for the pre-existing approved backlog, never bypassing the
+        # 60h same-account / 12h any-publish minimum gaps.
+        backlog_allowance = await self._rate_limiter.get_backlog_allowance(
+            self._pool, row["genre"]
+        )
         allowed, reason = await self._rate_limiter.can_publish(
-            self._pool, row["genre"], opportunity_score
+            self._pool, row["genre"], opportunity_score, backlog_allowance
         )
         if not allowed:
             next_slot = await self._rate_limiter.next_available_slot(
