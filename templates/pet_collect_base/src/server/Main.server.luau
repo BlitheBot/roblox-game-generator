@@ -20,6 +20,14 @@ local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
+-- Leaderboard submission (LeaderboardService contract; absent → no-op).
+local function submitScore(player: Player, value: number)
+	local fn = ServerStorage:FindFirstChild("SubmitScore")
+	if fn and fn:IsA("BindableEvent") then
+		fn:Fire(player, value)
+	end
+end
+
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
 	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
@@ -176,6 +184,14 @@ Players.PlayerAdded:Connect(function(player)
 				local mult = (if typeof(streakMult) == "number" then streakMult else 1)
 					* (if typeof(monetizationMult) == "number" then monetizationMult else 1)
 				data.Currency += Config.BaseIncomePerSecond * equippedPower(data) * mult * eventMult("coin_multiplier")
+				-- Leaderboard metric: rarest (highest-power) pet owned.
+				local rarest = 0
+				for _, pet in data.Pets do
+					if pet.Power > rarest then
+						rarest = pet.Power
+					end
+				end
+				submitScore(player, rarest)
 				pushState(player)
 			end
 			task.wait(1)

@@ -16,6 +16,14 @@ local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
+-- Leaderboard submission (LeaderboardService contract; absent → no-op).
+local function submitScore(player: Player, value: number)
+	local fn = ServerStorage:FindFirstChild("SubmitScore")
+	if fn and fn:IsA("BindableEvent") then
+		fn:Fire(player, value)
+	end
+end
+
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
 	local fn = ServerStorage:FindFirstChild("GetEventMultiplier")
@@ -169,6 +177,7 @@ Players.PlayerAdded:Connect(function(player)
 				end
 				data.Resource += growth
 				pushState(player)
+				submitScore(player, data.RebirthLevel) -- leaderboard metric: rebirth count
 			end
 			task.wait(Config.TickSeconds * eventMult("cooldown_multiplier"))
 		end

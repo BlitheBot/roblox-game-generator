@@ -41,6 +41,9 @@ SHARED_FILE_TARGETS = {
     "OnboardingClient.client.luau": "src/client/OnboardingClient.client.luau",
     # Live events (keeps games feeling alive) — server-authoritative, contract-driven.
     "EventsService.server.luau": "src/ServerScriptService/EventsService.server.luau",
+    # Universal leaderboard (GAP 5): OrderedDataStore service + top-10 display.
+    "LeaderboardService.server.luau": "src/ServerScriptService/LeaderboardService.server.luau",
+    "LeaderboardDisplay.client.luau": "src/client/LeaderboardDisplay.client.luau",
 }
 
 # Placeholders filled by code (numerics, monetization tables, titles) —

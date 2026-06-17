@@ -23,6 +23,14 @@ local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
 local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
+-- Leaderboard submission (LeaderboardService contract; absent → no-op).
+local function submitScore(player: Player, value: number)
+	local fn = ServerStorage:FindFirstChild("SubmitScore")
+	if fn and fn:IsA("BindableEvent") then
+		fn:Fire(player, value)
+	end
+end
+
 DataService.Init()
 PlotService.Init()
 ProductionService.Init()
@@ -88,6 +96,9 @@ local function onPlayerAdded(player: Player)
 				lastCoin = now
 				lastCurrency = data.Currency
 				PlaySound:FireClient(player, "coin_earn")
+			end
+			if data then
+				submitScore(player, data.TotalEarned) -- total earned; throttled service-side
 			end
 			task.wait(1)
 		end

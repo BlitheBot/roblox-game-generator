@@ -39,7 +39,29 @@ end)
 local currency: { [number]: number } = {}
 local votes: { [number]: string } = {}
 local alive: { [number]: boolean } = {}
+local roundsWon: { [number]: number } = {}
 local phase = "lobby"
+
+-- Leaderboard (LeaderboardService contract; absent → no-op). Rounds won is
+-- session-counted on top of the persisted base so it accumulates correctly.
+local function submitScore(player: Player, value: number)
+	local fn = ServerStorage:FindFirstChild("SubmitScore")
+	if fn and fn:IsA("BindableEvent") then
+		fn:Fire(player, value)
+	end
+end
+local function leaderboardBase(player: Player): number
+	local fn = ServerStorage:FindFirstChild("GetLeaderboardScore")
+	if fn and fn:IsA("BindableFunction") then
+		local ok, v = pcall(function()
+			return fn:Invoke(player)
+		end)
+		if ok and typeof(v) == "number" then
+			return v
+		end
+	end
+	return 0
+end
 
 local function load(player: Player)
 	currency[player.UserId] = 0
@@ -184,6 +206,8 @@ local function runRound()
 				table.insert(survivors, player.Name)
 					PlaySound:FireClient(player, "success")
 				save(player)
+				roundsWon[userId] = (roundsWon[userId] or 0) + 1
+				submitScore(player, roundsWon[userId])
 			end
 		end
 	end
@@ -219,11 +243,18 @@ trySpendCurrency.OnInvoke = function(player: Player, amount: number): boolean
 end
 
 Players.PlayerAdded:Connect(load)
+Players.PlayerAdded:Connect(function(player)
+	-- Seed the session rounds-won counter from the persisted leaderboard value.
+	task.spawn(function()
+		roundsWon[player.UserId] = leaderboardBase(player)
+	end)
+end)
 Players.PlayerRemoving:Connect(function(player)
 	save(player)
 	currency[player.UserId] = nil
 	votes[player.UserId] = nil
 	alive[player.UserId] = nil
+	roundsWon[player.UserId] = nil
 end)
 
 game:BindToClose(function()

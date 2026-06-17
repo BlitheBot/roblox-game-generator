@@ -18,7 +18,8 @@
                 "CompleteOnboarding": { "$className": "RemoteEvent" },
                 "OnboardingStepComplete": { "$className": "RemoteEvent" },
                 "UpdateHUD": { "$className": "RemoteEvent" },
-                "ServerError": { "$className": "RemoteEvent" }
+                "ServerError": { "$className": "RemoteEvent" },
+                "LeaderboardUpdate": { "$className": "RemoteEvent" }
             },
             "ToolboxAssets": { "$className": "Folder" },
             "ToggleShop": { "$className": "BindableEvent" }
