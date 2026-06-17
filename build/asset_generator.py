@@ -66,6 +66,32 @@ THUMBNAIL_ALT_SUFFIX = (
     "maximized click-through, premium splash-art quality"
 )
 
+# Icon prompts are deliberately DIFFERENT from thumbnails: a square icon must
+# read at ~50x50px in search results, so these ask for a single bold centered
+# symbol with thick outlines, not a busy scene.
+ICON_PROMPTS = {
+    "idle_tycoon": (
+        "Roblox game icon, simple bold {game_title} symbol, single coin or factory icon, "
+        "flat design, vibrant orange and gold colors, clean silhouette readable at 50x50 pixels, "
+        "centered composition, no text, thick outlines, app icon style"
+    ),
+    "pet_collect": (
+        "Roblox game icon, cute single pet face close-up, big eyes, pastel colors, "
+        "flat design, simple shapes, readable at small sizes, centered, no text, "
+        "rounded friendly shapes, app icon style"
+    ),
+    "survival_horror": (
+        "Roblox game icon, single scary eye or shadow figure silhouette, "
+        "dark red and black colors, high contrast, simple bold shape, "
+        "readable at small sizes, centered, no text, app icon style"
+    ),
+    "incremental_sim": (
+        "Roblox game icon, simple upward arrow or growth symbol, "
+        "blue and white colors, flat modern design, geometric shapes, "
+        "readable at small sizes, centered, no text, app icon style"
+    ),
+}
+
 
 class AssetGenerator:
     """Generates thumbnail, icon, and description for a game build."""
@@ -93,9 +119,17 @@ class AssetGenerator:
         image = await self._generate_image(prompt)
 
         thumbnail_path = build_dir / "thumbnail.png"
-        icon_path = build_dir / "icon.png"
         self._save_resized(image, thumbnail_path, (1920, 1080))
-        self._save_resized(image, icon_path, (512, 512))
+
+        # Icon is a SEPARATE image with its own prompt — never the thumbnail
+        # downscaled — so it stays legible at search-result sizes. If icon
+        # generation fails, fall back to the thumbnail rather than shipping none.
+        try:
+            icon_path = await self.generate_icon(concept, build_dir)
+        except Exception as exc:  # noqa: BLE001 — best-effort, fall back
+            log.warning("asset_generator.icon_failed", error=str(exc))
+            icon_path = build_dir / "icon.png"
+            self._save_resized(image, icon_path, (512, 512))
 
         description = await self._write_description(concept, meta_keywords or [])
         (build_dir / "description.txt").write_text(description, encoding="utf-8")
@@ -104,6 +138,7 @@ class AssetGenerator:
             "asset_generator.complete",
             game_title=game_title,
             thumbnail=str(thumbnail_path),
+            icon=str(icon_path),
             description_len=len(description),
         )
         return {
@@ -111,6 +146,28 @@ class AssetGenerator:
             "icon": icon_path,
             "description": description,
         }
+
+    async def generate_icon(self, concept: dict, build_dir: pathlib.Path) -> pathlib.Path:
+        """
+        Generates a distinct square icon optimized for small display sizes.
+        Different from the thumbnail — the icon must work at 50x50px in search
+        results. Also writes a 50px test render to verify readability.
+        """
+        mechanic_tag = concept.get("mechanic_tag", "idle_tycoon")
+        game_title = concept.get("game_title", "Game")
+
+        prompt_template = ICON_PROMPTS.get(mechanic_tag, ICON_PROMPTS["idle_tycoon"])
+        prompt = prompt_template.format(game_title=game_title)
+
+        image = await self._generate_image(prompt)
+
+        icon_path = build_dir / "icon.png"
+        self._save_resized(image, icon_path, (512, 512))
+
+        # Small-size render to confirm the icon reads at search-result scale.
+        self._save_resized(image, build_dir / "icon_test_50px.png", (50, 50))
+
+        return icon_path
 
     async def _generate_image(self, prompt: str) -> Image.Image:
         headers = {
