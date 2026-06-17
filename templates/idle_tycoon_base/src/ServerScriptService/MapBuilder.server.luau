@@ -163,3 +163,90 @@ spawn.Parent = map
 -- Simple exterior shell so the building reads as professional from spawn
 local exterior = block(Vector3.new(FLOOR_X + 16, 4, FLOOR_Z + 16), Vector3.new(0, -2, 0), Color3.fromRGB(120, 122, 128), Enum.Material.Concrete)
 local _ = exterior
+
+-- ── Navigation landmarks: glowing beacons + pathways (wayfinding) ─────────
+-- Wrapped in a do-block so its locals never collide with the map code above.
+do
+	local CYAN = Color3.fromRGB(0, 255, 255)
+	local GOLD = Color3.fromRGB(255, 215, 0)
+	local GREEN = Color3.fromRGB(60, 220, 90)
+	local PURPLE = Color3.fromRGB(180, 80, 255)
+
+	local function placeBeacon(pos: Vector3, color: Color3, labelText: string)
+		local pillar = Instance.new("Part")
+		pillar.Anchored = true
+		pillar.CanCollide = false
+		pillar.Size = Vector3.new(2, 18, 2)
+		pillar.Position = pos + Vector3.new(0, 9, 0)
+		pillar.Color = color
+		pillar.Material = Enum.Material.Neon
+		pillar.Transparency = 0.1
+		pillar.Parent = map
+
+		local orb = Instance.new("Part")
+		orb.Anchored = true
+		orb.CanCollide = false
+		orb.Shape = Enum.PartType.Ball
+		orb.Size = Vector3.new(4, 4, 4)
+		orb.Position = pos + Vector3.new(0, 19, 0)
+		orb.Color = color
+		orb.Material = Enum.Material.Neon
+		orb.Parent = map
+
+		local light = Instance.new("PointLight")
+		light.Color = color
+		light.Brightness = 3
+		light.Range = 30
+		light.Parent = orb
+
+		local emitter = Instance.new("ParticleEmitter")
+		emitter.Color = ColorSequence.new(color)
+		emitter.Rate = 10
+		emitter.Lifetime = NumberRange.new(1, 2)
+		emitter.Speed = NumberRange.new(2, 5)
+		emitter.Size = NumberSequence.new(0.8)
+		emitter.Transparency = NumberSequence.new(0.3, 1)
+		emitter.Parent = orb
+
+		local billboard = Instance.new("BillboardGui")
+		billboard.Size = UDim2.fromOffset(120, 34)
+		billboard.StudsOffset = Vector3.new(0, 3, 0)
+		billboard.MaxDistance = 320
+		billboard.Adornee = orb
+		billboard.Parent = orb
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.fromScale(1, 1)
+		label.BackgroundTransparency = 1
+		label.Text = labelText
+		label.TextColor3 = color
+		label.TextStrokeTransparency = 0.3
+		label.Font = Enum.Font.GothamBold
+		label.TextScaled = true
+		label.Parent = billboard
+	end
+
+	local function placePath(fromPos: Vector3, toPos: Vector3, color: Color3)
+		local delta = toPos - fromPos
+		local length = delta.Magnitude
+		if length < 1 then
+			return
+		end
+		local center = fromPos + delta / 2
+		local path = Instance.new("Part")
+		path.Anchored = true
+		path.CanCollide = false
+		path.Size = Vector3.new(6, 0.2, length)
+		path.CFrame = CFrame.lookAt(center, toPos)
+		path.Color = color
+		path.Material = Enum.Material.Neon
+		path.Transparency = 0.4
+		path.Parent = map
+	end
+
+	placePath(Vector3.new(-120, 1, 0), Vector3.new(90, 1, 0), Color3.fromRGB(255, 200, 60))
+	placeBeacon(Vector3.new(-130, 2, 0), CYAN, "SPAWN")
+	placeBeacon(Vector3.new(110, 2, -40), GREEN, "UPGRADES")
+	placeBeacon(Vector3.new(110, 2, 40), PURPLE, "PRESTIGE")
+	placeBeacon(Vector3.new(130, 2, 0), GOLD, "VIP")
+end
