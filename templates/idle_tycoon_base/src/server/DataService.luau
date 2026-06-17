@@ -5,8 +5,18 @@
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Config = require(game.ReplicatedStorage.Shared.Config)
+
+-- Surface a save failure to the player (after retries are exhausted).
+local function fireError(player: Player, errType: string)
+	local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+	local err = remotes and remotes:FindFirstChild("ServerError")
+	if err and err:IsA("RemoteEvent") then
+		err:FireClient(player, errType)
+	end
+end
 
 local STORE_NAME = "PlayerData_v1"
 local AUTOSAVE_INTERVAL = 120
@@ -63,9 +73,17 @@ function DataService.Save(player: Player)
 	if not data or not store then
 		return
 	end
-	pcall(function()
-		store:SetAsync(tostring(player.UserId), data)
-	end)
+	-- Retry up to 3 times with backoff before telling the player it failed.
+	for attempt = 1, 3 do
+		local ok = pcall(function()
+			store:SetAsync(tostring(player.UserId), data)
+		end)
+		if ok then
+			return
+		end
+		task.wait(attempt)
+	end
+	fireError(player, "datastore_failed")
 end
 
 function DataService.Release(player: Player)

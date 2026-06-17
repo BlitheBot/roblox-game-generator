@@ -18,6 +18,7 @@ local RequestTrade = Remotes:WaitForChild("RequestTrade") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
+local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
@@ -63,10 +64,21 @@ end
 
 local function save(player: Player)
 	local data = sessionData[player.UserId]
-	if data and store then
-		pcall(function()
+	if not (data and store) then
+		return
+	end
+	-- Retry up to 3 times with backoff before telling the player it failed.
+	for attempt = 1, 3 do
+		local ok = pcall(function()
 			store:SetAsync(tostring(player.UserId), data)
 		end)
+		if ok then
+			return
+		end
+		task.wait(attempt)
+	end
+	if player.Parent then
+		ServerError:FireClient(player, "datastore_failed")
 	end
 end
 
@@ -191,6 +203,7 @@ RequestHatch.OnServerEvent:Connect(function(player: Player, eggName: unknown)
 	for _, egg in Config.Eggs do
 		if egg.Name == eggName then
 			if data.Currency < egg.Cost then
+				ServerError:FireClient(player, "insufficient_funds")
 				return
 			end
 			data.Currency -= egg.Cost

@@ -15,6 +15,7 @@ local RequestVote = Remotes:WaitForChild("RequestVote") :: RemoteEvent
 local RoundState = Remotes:WaitForChild("RoundState") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
+local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
@@ -54,10 +55,21 @@ end
 
 local function save(player: Player)
 	local amount = currency[player.UserId]
-	if amount and store then
-		pcall(function()
+	if not (amount and store) then
+		return
+	end
+	-- Retry up to 3 times with backoff before telling the player it failed.
+	for attempt = 1, 3 do
+		local ok = pcall(function()
 			store:SetAsync(tostring(player.UserId), amount)
 		end)
+		if ok then
+			return
+		end
+		task.wait(attempt)
+	end
+	if player.Parent then
+		ServerError:FireClient(player, "datastore_failed")
 	end
 end
 

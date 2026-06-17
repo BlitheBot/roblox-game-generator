@@ -360,10 +360,42 @@ if Remotes then
 			showNotification(title, message, notifType)
 		end)
 	end
+
+	-- Server-reported failures → clear player-facing notifications.
+	local errorRemote = Remotes:FindFirstChild("ServerError")
+	if errorRemote and errorRemote:IsA("RemoteEvent") then
+		local messages = {
+			insufficient_funds = "Not enough coins for this.",
+			already_owned = "You already own this item.",
+			datastore_failed = "Couldn't save your progress. Trying again...",
+			purchase_failed = "Purchase failed. Please try again.",
+			rate_limited = "Please slow down a bit!",
+			invalid_action = "That action isn't available right now.",
+		}
+		errorRemote.OnClientEvent:Connect(function(errorType, customMessage)
+			showNotification(
+				"Notice",
+				customMessage or messages[errorType] or "Something went wrong.",
+				errorType == "datastore_failed" and "warning" or "error"
+			)
+		end)
+	end
+end
+
+-- Wrap a RemoteEvent fire so a client-side failure surfaces a notification
+-- instead of silently erroring.
+local function safeServerCall(remoteEvent, ...)
+	local ok = pcall(function(...)
+		remoteEvent:FireServer(...)
+	end, ...)
+	if not ok then
+		showNotification("Connection Issue", "Something went wrong. Please try again.", "error")
+	end
 end
 
 return {
 	showNotification = showNotification,
 	updateCurrency = updateCurrencyDisplay,
 	addActionButton = addActionButton,
+	safeServerCall = safeServerCall,
 }

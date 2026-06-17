@@ -14,6 +14,7 @@ local RequestAction = Remotes:WaitForChild("RequestAction") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
+local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
 -- Live event multiplier (EventsService contract; absent → 1).
 local function eventMult(effectType: string): number
@@ -62,9 +63,21 @@ end
 local function save(player: Player)
 	local data = sessionData[player.UserId]
 	if data and store then
-		pcall(function()
-			store:SetAsync(tostring(player.UserId), data)
-		end)
+		-- Retry up to 3 times with backoff before telling the player it failed.
+		local saved = false
+		for attempt = 1, 3 do
+			local ok = pcall(function()
+				store:SetAsync(tostring(player.UserId), data)
+			end)
+			if ok then
+				saved = true
+				break
+			end
+			task.wait(attempt)
+		end
+		if not saved and player.Parent then
+			ServerError:FireClient(player, "datastore_failed")
+		end
 	end
 	if data and leaderboardStore then
 		pcall(function()
@@ -201,6 +214,8 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 					data.Upgrades[def.Name] = { Level = level + 1 }
 						PlaySound:FireClient(player, "incremental_sim.upgrade")
 						OnboardingStepComplete:FireClient(player, "UpgradePurchased")
+				else
+					ServerError:FireClient(player, "insufficient_funds")
 				end
 				break
 			end
@@ -213,6 +228,8 @@ RequestAction.OnServerEvent:Connect(function(player: Player, action: unknown, ar
 			data.RebirthLevel += 1
 			save(player)
 			PlaySound:FireClient(player, "incremental_sim.rebirth")
+		else
+			ServerError:FireClient(player, "invalid_action")
 		end
 	else
 		return

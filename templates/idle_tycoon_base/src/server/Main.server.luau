@@ -21,6 +21,7 @@ local RequestPrestige = Remotes:WaitForChild("RequestPrestige") :: RemoteEvent
 local StateChanged = Remotes:WaitForChild("StateChanged") :: RemoteEvent
 local PlaySound = Remotes:WaitForChild("PlaySound") :: RemoteEvent
 local OnboardingStepComplete = Remotes:WaitForChild("OnboardingStepComplete") :: RemoteEvent
+local ServerError = Remotes:WaitForChild("ServerError") :: RemoteEvent
 
 DataService.Init()
 PlotService.Init()
@@ -104,6 +105,8 @@ RequestUpgrade.OnServerEvent:Connect(function(player: Player, upgradeName: unkno
 		pushState(player)
 		PlaySound:FireClient(player, "idle_tycoon.upgrade_buy")
 		OnboardingStepComplete:FireClient(player, "UpgradePurchased")
+	else
+		ServerError:FireClient(player, "purchase_failed")
 	end
 end)
 
@@ -112,6 +115,8 @@ RequestPurchase.OnServerEvent:Connect(function(player: Player, kind: unknown, id
 		if ShopService.TryBuyShopItem(player, identifier) then
 			pushState(player)
 			PlaySound:FireClient(player, "purchase_success")
+		else
+			ServerError:FireClient(player, "insufficient_funds")
 		end
 	elseif kind == "game_pass" then
 		ShopService.PromptGamePass(player, identifier)
