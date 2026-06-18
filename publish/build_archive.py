@@ -52,19 +52,28 @@ def archive_build(build_dir: pathlib.Path, genre: str) -> pathlib.Path | None:
     return target
 
 
-def prune_active_builds(keep: int = 2) -> None:
-    """FIX 6: keep at most `keep` directories in builds/active so abandoned/
-    failed builds don't accumulate on the low-RAM/disk VPS."""
+def prune_active_builds(keep: int = 2, protect: set[str] | None = None) -> None:
+    """FIX 6: keep at most `keep` of the most-recent *unprotected* directories
+    in builds/active so abandoned/failed builds don't accumulate on the
+    low-RAM/disk VPS.
+
+    `protect` is the set of dir names (game ids) that are still awaiting
+    publish — they are NEVER pruned regardless of count or age. The publish
+    rate limiter can hold an approved build for days; deleting it early makes
+    the publisher fail with 'No such file or directory'. A build leaves
+    builds/active only via archive_build (after a successful publish) or
+    discard_build (skip)."""
+    protect = protect or set()
     active = _builds_root() / "active"
     if not active.exists():
         return
     try:
-        entries = sorted(
-            (p for p in active.iterdir() if p.is_dir()),
+        unprotected = sorted(
+            (p for p in active.iterdir() if p.is_dir() and p.name not in protect),
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
-        for old in entries[keep:]:
+        for old in unprotected[keep:]:
             shutil.rmtree(old, ignore_errors=True)
             log.info("build_archive.active_pruned", build=old.name)
     except Exception as exc:

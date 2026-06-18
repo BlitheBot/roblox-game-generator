@@ -519,8 +519,17 @@ class Orchestrator:
 
         assert self._pool
         # FIX 6: cap the active build dir and refuse to start a build when the
-        # box is nearly out of RAM (it will retry next cycle).
-        prune_active_builds(keep=2)
+        # box is nearly out of RAM (it will retry next cycle). Protect builds
+        # still awaiting publish — the rate limiter can hold an approved build
+        # for days, and pruning it early breaks the publisher ("No such file").
+        async with self._pool.acquire() as conn:
+            pending = await conn.fetch(
+                "SELECT build_dir FROM pending_approvals WHERE processed_at IS NULL"
+            )
+        protect = {
+            pathlib.Path(r["build_dir"]).name for r in pending if r["build_dir"]
+        }
+        prune_active_builds(keep=2, protect=protect)
         avail = _proc_meminfo_available_mb()
         if avail is not None and avail < MIN_FREE_RAM_MB:
             log.warning(
