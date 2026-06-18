@@ -25,7 +25,7 @@ import structlog
 from intelligence.llm_client import DEEPSEEK_V3, chat
 from monitor.discord_reporter import DiscordReporter
 
-from .build_archive import archive_build, discard_build
+from .build_archive import active_build_protected_names, archive_build, discard_build
 from .marketer import InRobloxMarketer
 from .open_cloud_publisher import OpenCloudPublisher, PublishResult, dry_run_enabled
 from .rate_limiter import PublishRateLimiter
@@ -460,6 +460,112 @@ class ApprovalGate:
         discard_build(pathlib.Path(row["build_dir"]))
         log.info("approval_gate.skip_finalized", game_id=str(row["game_id"]))
 
+    async def _rebuild_lost_build(self, row):
+        """Publish-loss recovery: the build files for this approved/pending row
+        are gone (pruned before publish). Re-run the build pipeline (LuauAgent →
+        Rojo → Validator → …) from the original concept in concept_queue and
+        repoint the row at the freshly built artifacts so publishing can resume.
+
+        Returns the refreshed row on success, or None if the row was terminally
+        failed (the source concept is also gone) or the rebuild failed.
+        """
+        log.warning(
+            "approval_gate.build_lost_rebuilding",
+            game_id=str(row["game_id"]),
+            title=row["game_title"],
+            rbxl_path=row["rbxl_path"],
+        )
+
+        # The original concept must still exist before we spend tokens rebuilding.
+        async with self._pool.acquire() as conn:
+            concept_exists = await conn.fetchval(
+                "SELECT 1 FROM concept_queue WHERE id = $1", row["concept_id"]
+            )
+        if not concept_exists:
+            await self._fail_lost_build(row)
+            return None
+
+        from build.pipeline import BuildPipeline
+
+        try:
+            output = await BuildPipeline(self._pool, self._reporter).run(
+                str(row["concept_id"])
+            )
+        except Exception as exc:
+            log.error(
+                "approval_gate.rebuild_crashed",
+                game_id=str(row["game_id"]),
+                error=str(exc),
+            )
+            output = None
+        if output is None:
+            await self._fail_lost_build(row)
+            return None
+
+        # Repoint the existing row at the fresh artifacts. Keep the original
+        # game_id so !approve/!skip/!retry references stay valid; the new build
+        # dir (named by the rebuild's game_id) is what we now publish from.
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE pending_approvals
+                SET build_dir = $2, rbxl_path = $3, thumbnail_path = $4,
+                    description = $5
+                WHERE game_id = $1
+                """,
+                row["game_id"],
+                str(output.build_dir),
+                str(output.rbxl_path),
+                str(output.thumbnail_path),
+                output.description,
+            )
+            new_row = await conn.fetchrow(
+                "SELECT * FROM pending_approvals WHERE game_id = $1", row["game_id"]
+            )
+        await self._reporter.alert(
+            f"🔧 Rebuilt lost build for **{row['game_title']}** [{row['genre']}] — "
+            f"the .rbxl was missing on disk, so it was regenerated from the "
+            f"original concept and re-queued for publish."
+        )
+        log.info(
+            "approval_gate.rebuild_succeeded",
+            game_id=str(row["game_id"]),
+            new_build_dir=str(output.build_dir),
+        )
+        return new_row
+
+    async def _fail_lost_build(self, row) -> None:
+        """Terminal path for a lost build whose source concept is also gone:
+        mark the row failed (so it stops retrying forever) and alert clearly
+        that the concept must be regenerated from scratch."""
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE pending_approvals
+                SET status = 'failed', processed_at = NOW()
+                WHERE game_id = $1
+                """,
+                row["game_id"],
+            )
+            await conn.execute(
+                "UPDATE concept_queue SET status = 'failed' WHERE id = $1",
+                row["concept_id"],
+            )
+        await self._log_publish_failure(
+            row["concept_id"],
+            "build files lost and original concept no longer available",
+        )
+        await self._reporter.alert(
+            f"Game {row['game_title']} could not be republished — build files "
+            f"were lost and the original concept is no longer available. This "
+            f"concept will need to be regenerated from scratch."
+        )
+        log.error(
+            "approval_gate.build_lost_unrecoverable",
+            game_id=str(row["game_id"]),
+            title=row["game_title"],
+        )
+
     async def _publish_approved(
         self, row, publisher: OpenCloudPublisher, marketer: InRobloxMarketer
     ) -> None:
@@ -524,6 +630,22 @@ class ApprovalGate:
                 reason=reason,
             )
             return
+
+        # Publish-loss safety check: the build's .rbxl may have been pruned off
+        # disk while this row sat in the queue. Uploading would raise
+        # "[Errno 2] No such file or directory" and, because the file is gone,
+        # retrying forever can never succeed. Rebuild from the original concept
+        # instead (or fail terminally if that concept is also gone).
+        if not pathlib.Path(row["rbxl_path"]).exists():
+            log.warning(
+                "approval_gate.rbxl_missing",
+                game_id=str(row["game_id"]),
+                rbxl_path=row["rbxl_path"],
+            )
+            row = await self._rebuild_lost_build(row)
+            if row is None:
+                # Terminally failed (concept gone) or rebuild failed — alerted.
+                return
 
         log.info(
             "approval_gate.processing", game_id=str(row["game_id"]), title=row["game_title"]
@@ -604,8 +726,12 @@ class ApprovalGate:
         except Exception as exc:
             log.warning("approval_gate.title_ab_start_failed", error=str(exc))
         # Spec 18: archive the published build, prune to the newest
-        # MAX_BUILDS_PER_GENRE per genre
-        archived = archive_build(pathlib.Path(row["build_dir"]), row["genre"])
+        # MAX_BUILDS_PER_GENRE per genre. Never prune a build still referenced
+        # by an unprocessed pending_approvals row (publish-loss fix).
+        protected = await active_build_protected_names(self._pool)
+        archived = archive_build(
+            pathlib.Path(row["build_dir"]), row["genre"], protected=protected
+        )
         # Marketing video (improvement 7): generate + publish the short-form
         # promo after every successful publish (gated by env, never fatal)
         try:

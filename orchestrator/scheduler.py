@@ -515,12 +515,18 @@ class Orchestrator:
             score=concept.opportunity_score,
         )
         from build.pipeline import BuildPipeline
-        from publish.build_archive import prune_active_builds
+        from publish.build_archive import (
+            active_build_protected_names,
+            prune_active_builds,
+        )
 
         assert self._pool
         # FIX 6: cap the active build dir and refuse to start a build when the
         # box is nearly out of RAM (it will retry next cycle).
-        prune_active_builds(keep=2)
+        # Publish-loss fix: never prune builds for games still queued to
+        # publish — they need their .rbxl on disk until the publish completes.
+        protected = await active_build_protected_names(self._pool)
+        prune_active_builds(keep=2, protected=protected)
         avail = _proc_meminfo_available_mb()
         if avail is not None and avail < MIN_FREE_RAM_MB:
             log.warning(
