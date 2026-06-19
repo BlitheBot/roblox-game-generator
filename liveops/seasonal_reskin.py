@@ -31,6 +31,7 @@ from publish.open_cloud_publisher import (
     APIS_BASE,
     dry_run_enabled,
     load_genre_account,
+    strip_markdown,
     upload_thumbnail,
 )
 
@@ -267,6 +268,9 @@ async def _push_title_description(game: dict, title: str, description: str) -> N
             f"{APIS_BASE}/cloud/v2/universes/{game['universe_id']}",
             params={"updateMask": "displayName,description"},
             headers={"x-api-key": account.api_key, "Content-Type": "application/json"},
-            json={"displayName": title, "description": description},
+            json={
+                "displayName": strip_markdown(title),
+                "description": strip_markdown(description),
+            },
         )
         resp.raise_for_status()

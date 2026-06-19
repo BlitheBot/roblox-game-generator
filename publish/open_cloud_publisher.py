@@ -14,6 +14,7 @@ against published_games.published_at).
 """
 import os
 import pathlib
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -31,6 +32,66 @@ log = structlog.get_logger()
 
 APIS_BASE = "https://apis.roblox.com"
 PUBLISH_COOLDOWN_HOURS = 4
+
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_MD_HEADER_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s*")
+_MD_QUOTE_RE = re.compile(r"(?m)^\s{0,3}>\s?")
+
+
+def strip_markdown(text: str | None) -> str:
+    """Strip markdown so Roblox metadata is clean plain text. The `**` emphasis
+    markers in particular trip Roblox's WAF (HTTP 403 code 9009) on the
+    universe displayName/description PATCH — and Roblox renders descriptions as
+    plain text anyway, so markdown only shows up as literal asterisks."""
+    if not text:
+        return text or ""
+    text = _MD_LINK_RE.sub(r"\1", text)   # [label](url) -> label
+    text = _MD_HEADER_RE.sub("", text)    # # headers
+    text = _MD_QUOTE_RE.sub("", text)     # > blockquotes
+    text = text.replace("*", "")          # **bold** / *italic*  (the WAF trigger)
+    text = text.replace("`", "")          # `code`
+    text = re.sub(r"_{2,}", "", text)     # __bold__
+    return text
+
+
+async def _set_game_thumbnail(
+    genre: str, universe_id: int, image_bytes: bytes
+) -> tuple[bool | None, str]:
+    """Upload a game thumbnail. Returns (result, detail): True = uploaded,
+    False = failed, None = skipped (not possible).
+
+    Open Cloud API keys CANNOT set game thumbnails — the only working endpoint
+    is the legacy publish.roblox.com one, which needs a .ROBLOSECURITY cookie +
+    XSRF token (the old /universes/v1/{id}/thumbnails path never existed → 404).
+    If ROBLOX_COOKIE_{GENRE} (or the global ROBLOX_THUMBNAIL_COOKIE) is set we
+    use it; otherwise we skip without error and the game keeps its default
+    thumbnail."""
+    cookie = (
+        os.environ.get(f"ROBLOX_COOKIE_{genre.upper()}")
+        or os.environ.get("ROBLOX_THUMBNAIL_COOKIE")
+        or ""
+    ).strip()
+    if not cookie:
+        return None, (
+            "no account cookie configured — Open Cloud API keys cannot upload "
+            f"thumbnails; set ROBLOX_COOKIE_{genre.upper()} to enable"
+        )
+    url = f"https://publish.roblox.com/v1/games/{universe_id}/thumbnail/image"
+    files = {"Files": ("thumbnail.png", image_bytes, "image/png")}
+    async with httpx.AsyncClient(
+        timeout=120, cookies={".ROBLOSECURITY": cookie}
+    ) as client:
+        resp = await client.post(url, files=files)
+        # Legacy endpoints answer the first call with 403 + an XSRF token to echo
+        if resp.status_code == 403 and resp.headers.get("x-csrf-token"):
+            resp = await client.post(
+                url,
+                headers={"X-CSRF-TOKEN": resp.headers["x-csrf-token"]},
+                files=files,
+            )
+    if resp.status_code in (200, 201):
+        return True, "ok"
+    return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
 
 
 def dry_run_enabled() -> bool:
@@ -129,15 +190,15 @@ async def upload_thumbnail(
     if dry_run_enabled():
         log.info("publisher.dry_run_thumbnail_skipped", genre=genre)
         return
-    account = load_genre_account(genre)
-    async with httpx.AsyncClient(timeout=120) as client:
-        resp = await client.post(
-            f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
-            headers={"x-api-key": account.api_key},
-            files={"file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")},
-        )
-        resp.raise_for_status()
-    log.info("publisher.thumbnail_refreshed", genre=genre, universe_id=universe_id)
+    result, detail = await _set_game_thumbnail(
+        genre, universe_id, thumbnail_path.read_bytes()
+    )
+    if result is True:
+        log.info("publisher.thumbnail_refreshed", genre=genre, universe_id=universe_id)
+    elif result is None:
+        log.info("publisher.thumbnail_skipped", genre=genre, reason=detail)
+    else:
+        log.warning("publisher.thumbnail_refresh_failed", genre=genre, detail=detail)
 
 
 class OpenCloudPublisher:
@@ -273,7 +334,10 @@ class OpenCloudPublisher:
                     f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
                     params={"updateMask": "displayName,description"},
                     headers={**headers, "Content-Type": "application/json"},
-                    json={"displayName": game_title, "description": description},
+                    json={
+                        "displayName": strip_markdown(game_title),
+                        "description": strip_markdown(description),
+                    },
                 )
             except Exception as exc:
                 log.error(
@@ -336,48 +400,34 @@ class OpenCloudPublisher:
                     f"{thumbnail_path}. Published with no custom thumbnail."
                 )
             else:
-                try:
-                    resp = await client.post(
-                        f"{APIS_BASE}/universes/v1/{universe_id}/thumbnails",
-                        headers=headers,
-                        files={
-                            "file": ("thumbnail.png", thumbnail_path.read_bytes(), "image/png")
-                        },
+                result, detail = await _set_game_thumbnail(
+                    genre, universe_id, thumbnail_path.read_bytes()
+                )
+                if result is True:
+                    log.info(
+                        "publisher.thumbnail.ok", genre=genre, universe_id=universe_id
                     )
-                except Exception as exc:
-                    log.error(
-                        "publisher.thumbnail.exception",
+                elif result is None:
+                    # Open Cloud x-api-key cannot set thumbnails — expected, not
+                    # a failure. Don't alert; the game keeps its default image.
+                    log.info(
+                        "publisher.thumbnail.skipped",
                         genre=genre,
                         universe_id=universe_id,
-                        error=str(exc),
-                    )
-                    await self._alert(
-                        f"⚠️ Thumbnail upload ERRORED for **{game_title}** "
-                        f"[{genre}] (universe {universe_id}): {str(exc)[:400]}. "
-                        f"Published with no custom thumbnail — fix and re-upload."
+                        reason=detail,
                     )
                 else:
-                    if resp.status_code not in (200, 201):
-                        log.error(
-                            "publisher.thumbnail.failed",
-                            genre=genre,
-                            universe_id=universe_id,
-                            status=resp.status_code,
-                            body=resp.text[:500],
-                        )
-                        await self._alert(
-                            f"⚠️ Thumbnail upload FAILED for **{game_title}** "
-                            f"[{genre}] (universe {universe_id}) — HTTP "
-                            f"{resp.status_code}: {resp.text[:400]}. Published "
-                            f"with no custom thumbnail — fix and re-upload."
-                        )
-                    else:
-                        log.info(
-                            "publisher.thumbnail.ok",
-                            genre=genre,
-                            universe_id=universe_id,
-                            status=resp.status_code,
-                        )
+                    log.error(
+                        "publisher.thumbnail.failed",
+                        genre=genre,
+                        universe_id=universe_id,
+                        detail=detail,
+                    )
+                    await self._alert(
+                        f"⚠️ Thumbnail upload FAILED for **{game_title}** "
+                        f"[{genre}] (universe {universe_id}): {detail}. Published "
+                        f"with no custom thumbnail."
+                    )
 
             # Step 4: set place public
             log.info(

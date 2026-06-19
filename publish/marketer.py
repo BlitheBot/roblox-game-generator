@@ -22,7 +22,7 @@ import structlog
 from build.asset_generator import AssetGenerator
 from intelligence.llm_client import DEEPSEEK_V3, chat
 
-from .open_cloud_publisher import APIS_BASE, dry_run_enabled, load_genre_account
+from .open_cloud_publisher import APIS_BASE, dry_run_enabled, load_genre_account, strip_markdown
 
 log = structlog.get_logger()
 
@@ -259,6 +259,6 @@ class InRobloxMarketer:
                 f"{APIS_BASE}/cloud/v2/universes/{universe_id}",
                 params={"updateMask": "description"},
                 headers={"x-api-key": account.api_key, "Content-Type": "application/json"},
-                json={"description": description},
+                json={"description": strip_markdown(description)},
             )
             resp.raise_for_status()
